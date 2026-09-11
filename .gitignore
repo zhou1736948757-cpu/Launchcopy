@@ -1,0 +1,14 @@
+# SwiftPM
+.build/
+.swiftpm/
+
+# Xcode / macOS
+.DS_Store
+xcuserdata/
+DerivedData/
+
+# Telemetry output (kept out of repo; formal runs recorded in VALIDATION_RESULTS)
+/tmp/
+
+# Local packaging output (also under .build/)
+*.app/

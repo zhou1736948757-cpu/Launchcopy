@@ -1,0 +1,19 @@
+{
+  "workflow": "chef-worker-reviewer-workflow",
+  "version": "1.4",
+  "project": "PagingPrototype",
+  "initialized_at": "2026-08-28T14:38:59+09:00",
+  "role_assignments": {
+    "main": "current-main-conversation",
+    "chief": "Chief",
+    "worker": "Worker",
+    "reviewer": "Reviewer"
+  },
+  "artifact_root": "Workflow",
+  "runtime_config": "Workflow/config.json",
+  "plan": "Workflow/PLAN.md",
+  "main_brief": "Workflow/MAIN_BRIEF.md",
+  "state": "Workflow/STATE.json",
+  "events": "Workflow/events.jsonl",
+  "review_bundles": "Workflow/review-bundles/"
+}

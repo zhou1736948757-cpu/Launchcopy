@@ -1,0 +1,23 @@
+# T-1D-velocity700-tuning
+
+- **Type**: user-decision tuning round (第 16 轮) — parameter-value-only
+- **Phase**: 1D (post-closeout tuning, same pattern as rounds 9–15 in PagingParameters.swift comment history, e.g. T-worker-b-thresh42)
+- **Objective**: Per user request "velocityThreshold(800 px/秒)这个改成700px", change `Sources/PagingCore/PagingParameters.swift:72` `public var velocityThreshold: Double = 800` → `700`.
+- **Context**: User reported occasional snap-back ("滑了但是没滑到下一页，被抓住回到原来的页") during real-GUI testing. Main explained the three PageTargetPolicy decision paths: (1) release velocity ≥ velocityThreshold → forced turn regardless of displacement; (2) displacement ratio ≥ threshold (forward 0.42 / backward 0.35) → turn; (3) blended = absRatio + velocityContribution(0.3) × normalizedVelocity ≥ threshold → turn, else snap back. User's chosen remedy: lower velocityThreshold 800→700 so more flicks enter the forced-turn path.
+- **Exact change** (only permitted edit):
+  - `Sources/PagingCore/PagingParameters.swift:72`: `800` → `700`.
+  - Update the comment block at :70-72 (and :66-68 if needed) with a concise 第 16 轮 entry: round 16 (2026-08-30) user decision: velocityThreshold 800 → 700 ("滑了没翻页被回弹太频繁，降低强制翻页速度门槛"). Do NOT rewrite or delete historical round entries; keep the "来源：INDEPENDENT_EXPERIMENT；TUNING_REQUIRED；合法范围 200–2000" line intact.
+- **Test impact** (check and fix if needed):
+  - grep `Tests/` for hardcoded `800` / `velocityThreshold` references (likely `Tests/PagingCoreTests/PageTargetPolicyTests.swift` forced-turn boundary tests).
+  - Preferred: make boundary tests read `parameters.velocityThreshold` so they follow the parameter. If a test hardcodes 800 as the forced-turn boundary, update it to 700 (or to the parameter value) so it still verifies the forced path at/above threshold.
+  - No test may assert 800 as a constant after this change; full suite must stay green.
+- **Constraints / forbidden**:
+  - NO logic changes to PageTargetPolicy.swift, GestureSession.swift, or any other PagingCore file; NO changes to displacementThreshold/retreatDisplacementFactor/velocityContribution/other params.
+  - NO changes to AppLaunchController.swift, Package.swift, AppGridUI/, PagingSurface.swift, MacAppCatalog/.
+  - NO git commit/push/tag; NO cleanup/formatting pass outside the two touched lines.
+  - Privacy redlines unchanged (nothing telemetry-related touched).
+- **Gate**:
+  - `swift test` FULL suite green at the tree as-of-run-time (baseline 620; a parallel layout-centering repair task T-1D-layout-centering-repair may land tests concurrently — if the tree changes mid-run, rerun; final count must be all-green exit 0).
+  - `swift build -c debug` exit 0; `swift build -c release` exit 0.
+  - Forbidden-tree diff empty (PagingCore other files' hashes unchanged — note PagingParameters.swift WILL change by design).
+- **Result**: `Workflow/results/T-1D-velocity700-tuning.md` — changed lines before/after, test totals (Executed N tests), debug/release exit codes, forbidden-tree verification, decision recorded.
