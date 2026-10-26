@@ -1,3 +1,22 @@
+# Launchcopy 0.1.0
+
+A native Swift/AppKit application launcher for macOS, with paged grids, folders, search, an application library and customizable appearance.
+
+## Distribution
+- Release page: [v0.1.0](https://github.com/zhou1736948757-cpu/Launchcopy/releases/tag/v0.1.0). The GitHub page is authoritative for publication status and available downloads.
+- Apple Silicon (arm64), macOS 14+. Intel support is not included in this package.
+- **No Developer ID signature; not notarized.** macOS may block the download. No Apple approval/App Store compatibility claim. Review [installation and limitations](Docs/RELEASE_NOTES_0.1.0.md) and [Apple's per-app opening guidance](https://support.apple.com/en-us/102445); do not globally disable system security protections.
+- Uses the normal `com.launchcopy.app` identity. Preview/test layouts and preferences are separate and are not automatically imported. Quit older normal installations and back up important data before replacing them.
+
+## Evidence and provenance
+Fresh release verification: 3838 tests/0 failures; storage/quit focused checks 125/0. [Release validation](Docs/RELEASE_0.1.0_VALIDATION.md) distinguishes source review, automated checks, earlier L1 user experience and unperformed installation/device tests. The release includes a bounded storage fallback/temporary-cleanup safety repair; no paging retuning.
+
+Four-finger activation uses Apple's private MultitouchSupport integration and is not guaranteed across every device/OS update. Inward activation is enabled by default; other activation and optional local launch-history features have their own settings. See [release notes](Docs/RELEASE_NOTES_0.1.0.md) and [provenance](PROVENANCE/). No new license or blanket clean-room/legal-clearance claim is made.
+
+Build with `swift build`; test with `swift test`. Production packaging is provided by `Scripts/package-app.sh` (version 0.1.0/build 1; unique build-only output; does not install/sign/notarize). Earlier checkpoint/Phase documentation below is historical; it must not override the current release evidence.
+
+---
+
 # Launchcopy — L1 checkpoint (2026-10-26)
 
 Native macOS launcher built with Swift 6 and AppKit. This checkpoint contains the current implementation, tests, specifications, provenance notes and bounded review/acceptance records.

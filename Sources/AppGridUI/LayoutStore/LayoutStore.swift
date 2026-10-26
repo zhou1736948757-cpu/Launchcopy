@@ -26,6 +26,8 @@ public enum LayoutStoreLoadResult: Equatable, Sendable {
 
 /// 只读保护原因（中性；不含路径/正文）。
 public enum LayoutStoreReadOnlyReason: Equatable, Sendable {
+    /// No dedicated production directory could be resolved; no fallback I/O.
+    case storageUnavailable
     /// 双槽均损坏/不可解析（已 quarantine 中性命名，证据保留）。
     case bothSlotsCorrupt
     /// 载荷超工程上限（1 MiB / 512 folders / 10,000 refs / 2,048 members）。
@@ -80,6 +82,8 @@ public enum LayoutStoreResetResult: Equatable, Sendable {
 
 /// 多实例锁模式（ADR-009 Q6 显式裁决）。
 public enum LayoutStoreLockMode: Equatable, Sendable {
+    /// No storage backend, lock or writer is admitted.
+    case unavailable
     /// 本实例持有文件锁：single-writer，直接写。
     case singleWriter
     /// 检测到同机另一实例持有锁：降级 explicit last-writer-wins（仅更高 layout generation 可落盘）。

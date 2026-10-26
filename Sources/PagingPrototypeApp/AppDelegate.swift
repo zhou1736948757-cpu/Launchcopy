@@ -962,13 +962,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // 3g) Phase 1F：drag UI 装配（T-1F-D1）。
         //     统一输入仲裁协调器 + 中性拖拽视觉；commit 经 onCommit seam 暂存会话内布局
         //     （T-1F-E 接 provider/persist；本阶段零磁盘写）。
-        // 3g') Phase 1F：layout store（T-1F-D1-fix-e1）。生产实现 = LayoutStoreActor +
-        //     Application Support 中性子目录（ADR-009 Q5）；目录解析失败 → 临时目录兜底
-        //     （持久化路径仍存活，不崩溃）。enqueue 为 coalescing sink，不阻塞主线程。
-        let storeDirectory = uiTestProfile?.layoutDirectoryURL ?? (try? ApplicationSupportLayoutStoreDirectory(
-            subdirectoryName: "PagingPrototypeLayout").resolveStoreDirectory())
-            ?? FileManager.default.temporaryDirectory
-        installLayoutStore(LayoutStoreActor(storeDirectory: storeDirectory))
+        // Dedicated persistence only: resolution failure admits no shared-temp I/O.
+        installLayoutStore(makeLayoutStore())
         installDragUI(surface: surface, assembly: assembly)
     }
 
@@ -3394,6 +3389,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                                layout, DragLogicalIndexMap(layout: layout, catalog: catalog))
         resolvedLayoutBuildCount += 1
         return layout
+    }
+
+    /// Resolve before opening a journal; failure remains an explicit read-only backend.
+    @MainActor
+    func makeLayoutStore(directoryProvider: any LayoutStoreDirectoryProviding =
+                         ApplicationSupportLayoutStoreDirectory()) -> any LayoutStore {
+        if let profile = uiTestProfile {
+            return LayoutStoreActor(storeDirectory: profile.layoutDirectoryURL)
+        }
+        // An unresolved isolated request must not open production storage.
+        guard options.uiTestProfile == nil else { return UnavailableLayoutStore() }
+        do {
+            return LayoutStoreActor(storeDirectory: try directoryProvider.resolveStoreDirectory())
+        } catch {
+            return UnavailableLayoutStore()
+        }
     }
 
     @MainActor

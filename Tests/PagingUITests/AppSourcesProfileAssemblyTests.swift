@@ -14,9 +14,22 @@ final class AppSourcesProfileAssemblyTests: XCTestCase {
         try owner.configureUITestProfile(bundleURL: bundle)
         return (root, bundle, owner)
     }
-    private func settle(_ predicate: () -> Bool) async {
-        for _ in 0..<1000 { if predicate() { return }; await Task.yield() }
-        XCTFail("Bounded asynchronous operation did not finish")
+    private func settle(_ predicate: () -> Bool,
+                        file: StaticString = #filePath, line: UInt = #line) async {
+        // A yield count is not a deadline for work dispatched off the main actor.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while clock.now < deadline {
+            if predicate() { return }
+            do {
+                try await Task.sleep(for: .milliseconds(1))
+            } catch {
+                XCTFail("Bounded asynchronous wait was cancelled", file: file, line: line)
+                return
+            }
+        }
+        XCTAssertTrue(predicate(), "Bounded asynchronous operation did not finish",
+                      file: file, line: line)
     }
     func testSourcesNamespaceDistinctAndFreshStoreReopensOnlyItsCandidate() throws {
         let value = try fixture(); defer { try? FileManager.default.removeItem(at: value.root) }

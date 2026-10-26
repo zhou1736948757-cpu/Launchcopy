@@ -370,8 +370,11 @@ public actor LayoutStoreActor: LayoutStore {
     }
 
     private func cleanupTempFiles() async {
-        let urls = await io.contentsOfDirectory(at: storeDirectory)
-        for url in urls where url.lastPathComponent.hasSuffix(".tmp") {
+        // Startup and reset may only reclaim this journal's temporary files
+        // while owning the process lock. A peer may still be writing them.
+        guard lock != nil else { return }
+        for slot in Slot.allCases {
+            let url = storeDirectory.appendingPathComponent(slot.fileName).appendingPathExtension("tmp")
             await io.removeFileIfExists(at: url)
         }
     }

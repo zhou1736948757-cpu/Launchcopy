@@ -36,7 +36,8 @@ public protocol LayoutStoreIO: Sendable {
     func replaceFile(at source: URL, with destination: URL) async throws
     /// 读文件；不存在/不可读 → nil。
     func readFile(at url: URL) async -> Data?
-    /// 尽力删除（不存在 → 成功）。
+    /// Best-effort removal of owned journal temporary regular files only.
+    /// Preserve symlinks, directories and unrelated names; never recurse.
     func removeFileIfExists(at url: URL) async
     /// 移动（归档/quarantine 用）。
     func moveFile(from source: URL, to destination: URL) async throws
@@ -81,7 +82,22 @@ public struct FileManagerLayoutStoreIO: LayoutStoreIO {
     }
 
     public func removeFileIfExists(at url: URL) async {
-        try? FileManager.default.removeItem(at: url)
+        guard url.isFileURL else { return }
+        let name = url.lastPathComponent
+        guard name == "workspace-layout-v1-a.json.tmp" || name == "workspace-layout-v1-b.json.tmp" else {
+            return
+        }
+        // Anchor inspection and unlink to the same directory. Neither the
+        // directory itself nor the final entry may be followed as a symlink.
+        let directory = Darwin.open(url.deletingLastPathComponent().path,
+                                    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard directory >= 0 else { return }
+        defer { Darwin.close(directory) }
+        var metadata = stat()
+        guard fstatat(directory, name, &metadata, AT_SYMLINK_NOFOLLOW) == 0,
+              metadata.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else { return }
+        // No AT_REMOVEDIR: even a replacement directory cannot be removed.
+        _ = unlinkat(directory, name, 0)
     }
 
     public func moveFile(from source: URL, to destination: URL) async throws {
