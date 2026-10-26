@@ -1,3 +1,13 @@
+## GitHub source checkpoint — published 2026-10-26
+
+The user requested uploading this accepted version. Source snapshot commit [`049fe95e9071421b19c7a02980bf5b974c33e057`](https://github.com/zhou1736948757-cpu/Launchcopy/commit/049fe95e9071421b19c7a02980bf5b974c33e057) is published on [`checkpoint/l1-2026-10-26`](https://github.com/zhou1736948757-cpu/Launchcopy/tree/checkpoint/l1-2026-10-26). An independent HTTPS Git fetch verified exact tree `f3ee1e1c361ac812d8bce72671166c1096bba969` / 1758 curated files. This section is a documentation-only follow-up to that immutable implementation snapshot.
+
+Local main remains `319b8cc149a8553adfc3414abaacbe28b59d97ef`; its index and two unpublished historical commits were preserved, not pushed wholesale. Remote main remains the original parent; no force push. Current product sources and accepted paging parameters were not changed or retested. No running application was restarted and no profile data was read or changed by publication. Raw/generated captures, screenshots/logs, workflow runtime state, Python caches and app bundles are excluded from the checkpoint tree. Pattern preflight found no matched credential/raw-dump flags, not a universal privacy or legal certification. No GitHub Release, signed application or whole-product acceptance is claimed. Full earlier public parent history is not erased.
+
+Local publication receipts: `.build/verification/20261026/github-l1-upload/`. Historical local-only evidence links remain intentionally local. Detailed policy: `Docs/L1_CHECKPOINT_2026-10-26.md`.
+
+---
+
 ## Latest acceptance — 2026-10-26: user L1 PASS
 
 The user reported: “不错，算是通过l1”. Record **L1 user acceptance** for the requested first Library entry / first return experience in the isolated idle pre-display candidate. L1 is the user's label, not a newly defined formal test level or a legacy Phase 1J task. No separate direction scores or numerical frame measurements were supplied.
