@@ -41,39 +41,48 @@ public struct IconPipelineStats: Sendable, Equatable {
 
 /// 异步信号量（permits 个并发）。
 private actor AsyncSemaphore {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Bool, Never>
+    }
     private var permits: Int
-    private var waitQueue: [CheckedContinuation<Void, Never>] = []
+    private var waitQueue: [Waiter] = []
+    var waitingCount: Int { waitQueue.count }
 
-    init(permits: Int) {
-        self.permits = permits
+    init(permits: Int) { self.permits = permits }
+
+    private func acquire() async -> Bool {
+        let id = UUID()
+        return await withTaskCancellationHandler(operation: {
+            guard !Task.isCancelled else { return false }
+            if permits > 0 { permits -= 1; return true }
+            return await withCheckedContinuation { continuation in
+                // Covers cancellation before the handler's actor hop arrives.
+                guard !Task.isCancelled else { continuation.resume(returning: false); return }
+                waitQueue.append(.init(id: id, continuation: continuation))
+            }
+        }, onCancel: {
+            Task { await self.cancelWaiter(id) }
+        })
     }
 
-    func acquire() async {
-        if permits > 0 {
-            permits -= 1
-            return
-        }
-        await withCheckedContinuation { waitQueue.append($0) }
+    private func cancelWaiter(_ id: UUID) {
+        guard let index = waitQueue.firstIndex(where: { $0.id == id }) else { return }
+        waitQueue.remove(at: index).continuation.resume(returning: false)
     }
 
-    func release() {
-        if waitQueue.isEmpty {
-            permits += 1
-        } else {
-            waitQueue.removeFirst().resume()
-        }
+    private func release() {
+        if waitQueue.isEmpty { permits += 1 }
+        else { waitQueue.removeFirst().continuation.resume(returning: true) }
     }
 
     func withPermit<T>(_ body: () async throws -> T) async throws -> T {
-        await acquire()
-        do {
-            let value = try await body()
-            release()
-            return value
-        } catch {
-            release()
-            throw error
-        }
+        guard await acquire() else { throw CancellationError() }
+        defer { release() }
+        // Grant and cancellation can race; a granted canceled waiter still owes
+        // exactly one release, but must never start a now-unowned native load.
+        try Task.checkCancellation()
+        return try await body()
     }
 }
 
@@ -143,9 +152,11 @@ public final class IconRequestHandle: @unchecked Sendable {
 
 public final class IconPipeline: @unchecked Sendable {
     private final class InFlightEntry {
+        let loadID: UUID
         let task: Task<Void, Never>
         var consumers: [Consumer]
-        init(task: Task<Void, Never>, consumers: [Consumer]) {
+        init(loadID: UUID, task: Task<Void, Never>, consumers: [Consumer]) {
+            self.loadID = loadID
             self.task = task
             self.consumers = consumers
         }
@@ -163,6 +174,10 @@ public final class IconPipeline: @unchecked Sendable {
     private let memoryPressureQueue = DispatchQueue(label: "AppIconPipeline.memoryPressure")
     private var cache: IconCache
     private var inFlight: [IconKey: InFlightEntry] = [:]
+    // Only accepted, not-yet-admitted MainActor callbacks are retained here.
+    // No source-generation tombstones or catalog history accumulate.
+    private var queuedDeliveries: [ObjectIdentifier: Consumer] = [:]
+    private var processedLoadResults: UInt64 = 0
     private var counters = IconPipelineStats()
     private var isShutdown = false
     private var memoryPressureObserver: NSObjectProtocol?
@@ -231,6 +246,9 @@ public final class IconPipeline: @unchecked Sendable {
 
             if let entry = cache.value(for: key) {
                 counters.cacheHits += 1
+                if consumer.tryMarkDelivered() {
+                    queuedDeliveries[ObjectIdentifier(consumer)] = consumer
+                }
                 return .cached(entry.image)
             }
 
@@ -241,11 +259,12 @@ public final class IconPipeline: @unchecked Sendable {
                 return .merged
             }
 
+            let loadID = UUID()
             let task = Task { [weak self] in
                 guard let self else { return }
-                await self.performLoad(key: key)
+                await self.performLoad(key: key, loadID: loadID)
             }
-            inFlight[key] = InFlightEntry(task: task, consumers: [consumer])
+            inFlight[key] = InFlightEntry(loadID: loadID, task: task, consumers: [consumer])
             return .started
         }
 
@@ -254,7 +273,7 @@ public final class IconPipeline: @unchecked Sendable {
             // 拒新请求：惰性 handle，此后零回调
             return IconRequestHandle(pipeline: nil, key: key, consumer: nil)
         case .cached(let image):
-            deliver(consumer, .success(image))
+            deliverOnMain(consumer, .success(image))
             return IconRequestHandle(pipeline: self, key: key, consumer: consumer)
         case .merged, .started:
             return IconRequestHandle(pipeline: self, key: key, consumer: consumer)
@@ -297,6 +316,34 @@ public final class IconPipeline: @unchecked Sendable {
         }
     }
 
+    /// Revoke all cached variants, owned loads and queued deliveries for sources
+    /// whose committed mapping changed. Unaffected identities keep their cache.
+    /// A callback already admitted on MainActor has won its delivery boundary.
+    public func invalidateSources(for identities: Set<IconIdentity>) {
+        guard !identities.isEmpty else { return }
+        let retiredTasks: [Task<Void, Never>] = withLock {
+            guard !isShutdown else { return [] }
+            var retired: [Task<Void, Never>] = []
+            for key in Array(cache.entries.keys) where identities.contains(key.identity) {
+                if cache.remove(key) { counters.evictions += 1 }
+            }
+            for key in Array(inFlight.keys) where identities.contains(key.identity) {
+                guard let entry = inFlight.removeValue(forKey: key) else { continue }
+                for consumer in entry.consumers where consumer.tryMarkCancelled() {
+                    counters.cancellations += 1
+                }
+                retired.append(entry.task)
+            }
+            for (id, consumer) in queuedDeliveries where identities.contains(consumer.key.identity) {
+                queuedDeliveries.removeValue(forKey: id)
+            }
+            return retired
+        }
+        // Cancellation handlers are synchronous and may reenter this pipeline.
+        // Retire ownership first, then invoke them without holding its lock.
+        for task in retiredTasks { task.cancel() }
+    }
+
     /// 显式清理全部缓存条目。
     public func purgeAll() {
         withLock {
@@ -318,6 +365,7 @@ public final class IconPipeline: @unchecked Sendable {
         withLock {
             guard !isShutdown else { return }
             isShutdown = true
+            queuedDeliveries.removeAll()
             cache.removeAll()                       // teardown 清空不计 eviction（非策略事件）
             for entry in inFlight.values {
                 entry.task.cancel()
@@ -337,23 +385,30 @@ public final class IconPipeline: @unchecked Sendable {
         withLock { counters }
     }
 
+    // Actor-independent, read-only seam for explicit queued-delivery test gates.
+    var queuedDeliveryCount: Int { withLock { queuedDeliveries.count } }
+    var waitingLoadCount: Int { get async { await limiter.waitingCount } }
+    // Acquiring the finish lock means its entire ownership decision has ended.
+    // Includes stale results; not a task/cancellation or UI-delivery count.
+    var processedLoadResultCount: UInt64 { withLock { processedLoadResults } }
+
     // MARK: 内部
 
-    private func performLoad(key: IconKey) async {
+    private func performLoad(key: IconKey, loadID: UUID) async {
         let result: IconResult
         do {
             let image = try await limiter.withPermit { [loader] in
                 try await loader.load(key: key)
             }
+            // Native decoding may ignore task cancellation. Record its terminal
+            // result through the existing loadID gate, without capping/caching it.
+            guard !Task.isCancelled else {
+                finish(key: key, loadID: loadID, result: .failed(.cancelled))
+                return
+            }
             // 统一缩略（写回缓存前）：加载后最大 256×256，纯内存操作；
             // 缓存 cost 由 estimatedCost 按缩略后最大 rep 自动计（无需改）。
             let capped = IconPipeline.cappedImage(image)
-            let cost = IconPipeline.estimatedCost(of: capped)
-            withLock {
-                guard !isShutdown else { return }
-                let evicted = cache.insert(capped, cost: cost, for: key)
-                counters.evictions += evicted
-            }
             result = .success(capped)
         } catch {
             if Task.isCancelled {
@@ -361,14 +416,29 @@ public final class IconPipeline: @unchecked Sendable {
             }
             result = .failed(error is CancellationError ? .cancelled : .loadFailed)
         }
-        finish(key: key, result: result)
+        finish(key: key, loadID: loadID, result: result)
     }
 
-    private func finish(key: IconKey, result: IconResult) {
+    private func finish(key: IconKey, loadID: UUID, result: IconResult) {
+        let cacheValue: (image: NSImage, cost: Int)?
+        if case .success(let image) = result {
+            cacheValue = (image, IconPipeline.estimatedCost(of: image))
+        } else {
+            cacheValue = nil
+        }
         var targets: [Consumer] = []
         withLock {
-            guard let entry = inFlight.removeValue(forKey: key) else { return }
+            processedLoadResults &+= 1
+            // Cancellation can remove this key and a new request can replace it
+            // before a non-cooperative old loader returns. Only its current load
+            // owns both cache insertion and removal/delivery of these consumers.
+            guard !isShutdown, let entry = inFlight[key], entry.loadID == loadID else { return }
+            inFlight.removeValue(forKey: key)
+            if let cacheValue {
+                counters.evictions += cache.insert(cacheValue.image, cost: cacheValue.cost, for: key)
+            }
             for consumer in entry.consumers where consumer.tryMarkDelivered() {
+                queuedDeliveries[ObjectIdentifier(consumer)] = consumer
                 targets.append(consumer)
             }
         }
@@ -377,21 +447,18 @@ public final class IconPipeline: @unchecked Sendable {
         }
     }
 
-    private func deliver(_ consumer: Consumer, _ result: IconResult) {
-        guard consumer.tryMarkDelivered() else { return }
-        deliverOnMain(consumer, result)
-    }
-
-    /// UI 写回必在 MainActor；shutdown 后（含已入队未执行的）一律零回调。
+    /// Delivery admission and source invalidation share one lock, but UI callbacks
+    /// run outside it. MainActor catalog commits cannot interleave with a callback.
     private func deliverOnMain(_ consumer: Consumer, _ result: IconResult) {
         Task { @MainActor [weak self] in
-            guard let self, !self.isShutdownNow() else { return }
+            guard let self else { return }
+            let admitted = self.withLock {
+                !self.isShutdown &&
+                    self.queuedDeliveries.removeValue(forKey: ObjectIdentifier(consumer)) != nil
+            }
+            guard admitted else { return }
             consumer.onApply(consumer.key, consumer.generation, result)
         }
-    }
-
-    private func isShutdownNow() -> Bool {
-        withLock { isShutdown }
     }
 
     private func handleMemoryPressure() {

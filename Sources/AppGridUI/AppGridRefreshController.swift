@@ -143,16 +143,14 @@ public final class AppGridRefreshController {
         setState(resolveState(after: outcome))
     }
 
-    /// 确定性状态解析（测试断言依据）：
-    /// cancelled → 保持刷新前状态；整体失败 → .partialFailure；
-    /// 成功且 0 条 → .empty；成功且有失败分类计数 → .partialFailure；否则 .ready。
+    /// Cancellation retains the previous state. Whole-scan or discovery failures
+    /// take precedence over empty results; non-blocking issues preserve ready/empty.
     private func resolveState(after outcome: AppGridRefreshOutcome) -> AppGridUIState {
         if outcome.cancelled {
             return stateBeforeRefresh ?? state
         }
-        guard outcome.succeeded else { return .partialFailure }
-        if outcome.appCount == 0 { return .empty }
-        return outcome.failureCount > 0 ? .partialFailure : .ready
+        guard outcome.succeeded, outcome.discoveryFailureCount == 0 else { return .partialFailure }
+        return outcome.appCount == 0 ? .empty : .ready
     }
 
     private func setState(_ newState: AppGridUIState) {

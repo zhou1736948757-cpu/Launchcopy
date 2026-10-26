@@ -17,7 +17,7 @@
 //    ② AppID 仍在当前快照的 identity→URL 映射中（重新确认存在）；
 //    ③ 磁盘 fileExists 重新确认（catalog 与磁盘不一致 → 拒绝）；
 //  - 启动失败非致命（.failedToLaunch 中性结果，不崩溃、不弹窗）；
-//  - 无进程管理/最近使用统计/自动重启/隐藏退出其他 App；
+//  - 无进程管理/自动重启/隐藏退出其他 App；可选本地启动观察器独立负责显式许可的记录；
 //  - 不把真实 bundle URL 写入 telemetry：只记中性 phase 事件（app.launch），
 //    结果计数保留在内存（outcomeCounts），不进日志。
 
@@ -49,6 +49,7 @@ public enum AppLaunchOutcome: Equatable, Sendable {
     case rejectedStaleRevision
     /// AppID 不在当前 catalog（identity→URL 映射无此 app）。
     case rejectedMissingApp
+    case rejectedHiddenApp
     /// bundle URL 在 catalog 中但磁盘重新确认失败（文件已不存在）。
     case rejectedMissingFile
     /// 点击处无绑定 cell（空白/占位 cell/无 bindingToken）。
@@ -68,6 +69,12 @@ public final class AppLaunchController: NSObject {
 
     /// 启动尝试回调（中性；AppDelegate 可观察）。
     public var onLaunchAttempt: ((AppLaunchOutcome) -> Void)?
+
+    /// Locally scoped optional observer, prepared only after current launch validation.
+    /// Completion means executor acceptance, not actual process usage.
+    var prepareLaunchObservation: ((AppRecord) -> (() -> Void)?)?
+    /// A destructive transaction can temporarily revoke all shared launch routes.
+    var interactionIsAvailable: () -> Bool = { true }
 
     private weak var surface: PagingSurface?
     private let assembly: AppCatalogAssembly
@@ -107,10 +114,22 @@ public final class AppLaunchController: NSObject {
     /// 公开测试入口：与手势识别器同一路径（hitTest → cell → 校验 → 启动）。
     @discardableResult
     public func handleClick(at point: NSPoint) -> AppLaunchOutcome {
-        let hit = surface?.hitTest(point)
+        guard let surface else { return record(.rejectedNoBinding) }
+        // The gesture reports a surface-local point; NSView.hitTest(_:) expects the
+        // receiver's superview coordinate space.
+        let hitPoint: NSPoint
+        if let superview = surface.superview {
+            hitPoint = surface.convert(point, to: superview)
+        } else {
+            hitPoint = point
+        }
+        let hit = surface.hitTest(hitPoint)
         var current = hit
         while let candidate = current {
             if let cell = candidate as? AppGridCellView {
+                guard cell.acceptsLaunchHit(at: cell.convert(point, from: surface)) else {
+                    return record(.rejectedNoBinding)
+                }
                 return handleCell(cell)
             }
             current = candidate.superview
@@ -124,22 +143,40 @@ public final class AppLaunchController: NSObject {
         record(launch(from: cell))
     }
 
+    /// Library/non-cell entry retains the displayed revision and canonical URL.
+    /// Execution shares the catalog/hidden/file/public-launch validation below;
+    /// callers must additionally protect their view/source/lifecycle generation.
+    @discardableResult
+    func handleApp(appID: AppID, expectedRevision: CatalogRevision, expectedURL: URL) -> AppLaunchOutcome {
+        record(launch(appID: appID, expectedRevision: expectedRevision.value, expectedURL: expectedURL))
+    }
+
     // MARK: - 校验管线（§3.2 全项）
 
     private func launch(from cell: AppGridCellView) -> AppLaunchOutcome {
         guard let token = cell.bindingToken else { return .rejectedNoBinding }
         guard let appID = token.appID as? AppID else { return .rejectedNoBinding }
+        return launch(appID: appID, expectedRevision: token.catalogRevision, expectedURL: nil)
+    }
 
+    private func launch(appID: AppID, expectedRevision: UInt64, expectedURL: URL?) -> AppLaunchOutcome {
+        guard interactionIsAvailable() else { return .rejectedNoBinding }
         // ① stale revision 拒绝：cell 捕获的 catalog revision ≠ 当前已服务 revision。
-        guard let served = assembly.provider.servedRevision, token.catalogRevision == served else {
+        guard let served = assembly.provider.servedRevision, expectedRevision == served else {
             return .rejectedStaleRevision
         }
         // ② 当前 catalog 重新确认存在（映射随每次提交重建；旧 identity 立即失效）。
+        guard !assembly.provider.isHidden(appID) else { return .rejectedHiddenApp }
         guard let url = assembly.bundleURL(for: appID) else { return .rejectedMissingApp }
+        if let expectedURL, expectedURL != url { return .rejectedMissingApp }
         // ③ 磁盘重新确认（catalog 与磁盘不一致 → 拒绝，绝不启动已消失的 bundle）。
         guard fileManager.fileExists(atPath: url.path) else { return .rejectedMissingFile }
         // ④ 启动（公开 NSWorkspace API；失败非致命）。
-        return launcher.openApplication(at: url) ? .launched : .failedToLaunch
+        let observation = assembly.provider.servedSnapshot?.records.first(where: { $0.id == appID && $0.canonicalURL == url })
+            .flatMap { prepareLaunchObservation?($0) }
+        guard launcher.openApplication(at: url) else { return .failedToLaunch }
+        observation?()
+        return .launched
     }
 
     @discardableResult

@@ -17,6 +17,7 @@
 
 import AppKit
 import PagingCore
+import LauncherLocalization
 
 /// 弱引用盒：避免 init 完成前 self 捕获（events 闭包在 core 创建前构造）。
 private final class SurfaceReference {
@@ -71,13 +72,18 @@ public final class PagingSurface: NSView {
     /// 内容提供者（§E seam；nil → NeutralContentProvider 中性缺省，Phase 1A 回归模式）。
     /// 只请求承载；PagingUI 不拥有 scanner/icon loader（§14.A）。
     public var contentProvider: PagingPageContentProviding? {
+        willSet { cancelDirectNavigation() }
         didSet {
             guard !isTearingDown else { return }
             if let revision = contentProvider?.servedRevision {
                 servedRevision = revision // 未就绪（nil）→ 保持现值，app 层就绪后 refreshPresentation 驱动
             }
+            if oldValue != nil, core.state == .idle, let count = contentProvider?.servedPageCount {
+                core.setPageCount(count)
+            }
             refreshLiveHostContent(revision: effectiveRevisionForPass())
             relayoutPages()
+            onPageNavigationChange?()
         }
     }
 
@@ -103,6 +109,12 @@ public final class PagingSurface: NSView {
     public var onPagePrepared: ((Int, Bool) -> Void)?
     /// 动画帧（dt）——telemetry frame 事件用。
     public var onAnimationFrame: ((TimeInterval) -> Void)?
+    /// Additional work on the existing frame pump, independent of telemetry.
+    /// Called once per shared frame; the owner must make inactive advancement a no-op.
+    public var supplementalFrameStep: ((TimeInterval) -> Void)?
+    /// Additional frame demand (for example a manually driven parent pager).
+    /// Install/clear both supplemental hooks, then call refreshFrameDemand().
+    public var supplementalFrameDemand: (() -> Bool)?
     /// 页面宽度变化（resize）——telemetry 用。
     public var onResize: (() -> Void)?
     /// teardown 完成——telemetry teardown.complete 用。
@@ -134,6 +146,8 @@ public final class PagingSurface: NSView {
 
     /// idle 边界事件：core 进入 idle 时通知 app 层做 anchor remap（§E 约束①）。
     public var onIdleBoundary: (() -> Void)?
+    /// Discrete count/commit/presentation observation, independent of telemetry and offset ticks.
+    public var onPageNavigationChange: (() -> Void)?
 
     // MARK: - 内部状态
 
@@ -160,6 +174,7 @@ public final class PagingSurface: NSView {
     internal private(set) var pendingFinishSince: TimeInterval?
     internal private(set) var needsFinish = false
     private var gestureSequence: UInt64 = 0
+    private var isCancellingDirectNavigation = false
 
     // MARK: - 测试/观察入口
 
@@ -180,6 +195,33 @@ public final class PagingSurface: NSView {
     public private(set) var isTearingDown = false
     /// 当前页可访问性描述（"Page X of M"）。
     public private(set) var accessibilityDescription = ""
+    private var displayedStrings: LocalizedStrings?
+    private var textUpdateScheduled = false
+    private var textUpdateGeneration: UInt64 = 0
+    internal private(set) var languageFormattingCount = 0
+    internal private(set) var diagnosticFormattingCount = 0
+
+    /// The application separately injects the same snapshot into its renderer page cache.
+    public func relabel(strings: LocalizedStrings) {
+        guard !isTearingDown else { return }
+        displayedStrings = strings
+        for host in liveHosts.values { host.relabel(strings: strings) }
+        for host in reusePool { host.relabel(strings: strings) }
+        queuePresentationText()
+    }
+
+    /// Coalesces Core's transitive callbacks without formatting or resource access.
+    private func queuePresentationText() {
+        guard !isTearingDown, !textUpdateScheduled else { return }
+        textUpdateScheduled = true
+        let generation = textUpdateGeneration
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isTearingDown, generation == self.textUpdateGeneration else { return }
+            self.textUpdateScheduled = false
+            self.renderAccessibilityDescription()
+            self.renderLabOverlay()
+        }
+    }
     /// 当前手势序号（began 时递增）。
     public private(set) var lastGestureID: UInt64 = 0
 
@@ -262,14 +304,43 @@ public final class PagingSurface: NSView {
 
     // MARK: - 对外控制（转发 Core；保持单一入口）
 
+    public var presentedOffset: Double { core.visualOffset }
+    public var isDirectNavigationActive: Bool { core.isDirectNavigationActive }
+
+    public func canRequestPage(_ targetPage: Int) -> Bool {
+        !isTearingDown && !isCancellingDirectNavigation && !needsFinish && pendingFinishSince == nil && core.canRequestPage(targetPage)
+    }
+
+    @discardableResult
+    public func requestPage(_ targetPage: Int, timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard canRequestPage(targetPage), timestamp.isFinite else { return false }
+        if pinnedPresentation == nil { beginInteraction() }
+        let accepted = core.requestPage(targetPage, timestamp: timestamp)
+        updateAnimationDriver()
+        onPageNavigationChange?()
+        return accepted
+    }
+
+    /// Scoped lifecycle cancellation; physical tracking/settling policy is unchanged.
+    public func cancelDirectNavigation() {
+        guard !isTearingDown, !isCancellingDirectNavigation, isDirectNavigationActive else { return }
+        isCancellingDirectNavigation = true
+        defer { isCancellingDirectNavigation = false }
+        core.cancel()
+        updateAnimationDriver()
+        onPageNavigationChange?()
+    }
+
     /// pageCount 变化（转发 Core + 重算可见范围 + 刷新 live 页面内容）。
     public func setPageCount(_ count: Int) {
         guard !isTearingDown else { return }
+        if count != core.pageCount { cancelDirectNavigation() }
         core.setPageCount(count)
         relayoutPages()
         // 既有 live 页面也要刷新页码标签/内容（"Page N of M" 中的 M 已变）：
         // seam 全量刷新（同 revision，相邻页不混）。
         refreshLiveHostContent(revision: effectiveRevisionForPass())
+        onPageNavigationChange?()
     }
 
     /// Reduce Motion 动态切换（转发 Core）。
@@ -277,6 +348,7 @@ public final class PagingSurface: NSView {
         guard !isTearingDown else { return }
         core.setReduceMotion(enabled)
         updateAnimationDriver()
+        onPageNavigationChange?()
     }
 
     /// 从系统偏好（或 override provider）刷新 Reduce Motion。
@@ -297,24 +369,32 @@ public final class PagingSurface: NSView {
     public func teardown() {
         guard !isTearingDown else { return }
         isTearingDown = true
+        textUpdateGeneration &+= 1
+        textUpdateScheduled = false
+        onPageNavigationChange = nil
         surfaceGeneration &+= 1 // §6.4 字段 7：surface 生命周期 generation bump → 在途绑定全部作废
         pinnedPresentation = nil
         pendingLatestSnapshot = nil
         pendingSameRevisionReload = false // teardown 后零写回（同 revision 重载 pending 一并作废）
         clearPendingFinish() // §7.3：teardown 后零回调（待决释放不得在关闭后触发）
+        supplementalFrameStep = nil
+        supplementalFrameDemand = nil
         frameDriver?.stop()
         frameDriver = nil
         core.teardown()
         for (_, host) in liveHosts {
+            host.invalidatePendingLanguageText()
             host.removeFromSuperview()
         }
+        for host in reusePool { host.invalidatePendingLanguageText() }
         liveHosts.removeAll()
         liveHostCount = 0
         reusePool.removeAll()
         poolHostCount = 0
         containerView.removeFromSuperview()
         labOverlay.removeFromSuperview()
-        updateAccessibilityDescription()
+        accessibilityDescription = ""
+        setAccessibilityValue("")
         onTeardown?()
     }
 
@@ -492,22 +572,31 @@ public final class PagingSurface: NSView {
         guard !isTearingDown else { return }
         let profiler = frameProfiler
         profiler?.beginFrame(timestamp: ProcessInfo.processInfo.systemUptime)
+        defer {
+            profiler?.endFrame(gestureActive: !isTearingDown && (core.isAnimating || pendingFinishSince != nil))
+        }
         // T-worker-b-input-fix：真实触控板 ended 后无任何下一事件 → 帧驱动在窗口期满后自动
         // 触发释放决策（回弹/翻页/吸住）。窗口内 momentumBegan/新 began 等已清除待决状态，
         // 故不误伤 fling；timestamp 用 ended 时刻（释放速度语义一致）。
         if needsFinish, let since = pendingFinishSince,
            pendingFinishTimeSource() - since >= pendingFinishThreshold {
+            guard !isTearingDown else { return }
             let finishTime = since
             clearPendingFinish()
             _ = core.finishGesture(timestamp: finishTime)
         }
+        guard !isTearingDown else { return }
         profiler?.markFrameInputDone()
         onAnimationFrame?(deltaTime)
+        guard !isTearingDown else { return }
         _ = core.tick(deltaTime: deltaTime)
+        guard !isTearingDown else { return }
         profiler?.markFrameStateDone()
+        supplementalFrameStep?(deltaTime)
+        guard !isTearingDown else { return }
         updateAnimationDriver()
+        guard !isTearingDown else { return }
         profiler?.markFrameViewDone()
-        profiler?.endFrame(gestureActive: core.isAnimating || pendingFinishSince != nil)
     }
 
     // MARK: - Core 事件处理
@@ -519,9 +608,9 @@ public final class PagingSurface: NSView {
         appEvents.onStateChange?(state)
         // §E seam：idle/cancelled 边界 → 解除 pin + 一次性 apply pendingLatestSnapshot（§6.2）；
         // idle 边界另发 onIdleBoundary 通知 app 层做 anchor remap（§E 约束①）。
-        if state == .idle || state == .cancelled {
+        if (state == .idle || state == .cancelled) && core.state == state && !isTearingDown {
             endInteraction()
-            if state == .idle {
+            if state == .idle && core.state == .idle && !isTearingDown {
                 onIdleBoundary?()
             }
         }
@@ -529,6 +618,7 @@ public final class PagingSurface: NSView {
         relayoutPagesIfRangeChanged()
         updateAccessibilityDescription()
         updateLabOverlay()
+        if !isTearingDown { onPageNavigationChange?() }
     }
 
     private func handleCoreOffset(_ offset: Double) {
@@ -538,7 +628,8 @@ public final class PagingSurface: NSView {
         appEvents.onVisualOffsetChange?(offset)
         guard !isTearingDown else { return }
         let width = max(bounds.width, 64)
-        containerView.frame.origin.x = -CGFloat(offset) * width
+        // Outward observers may have synchronously cancelled or replaced the offset.
+        containerView.frame.origin.x = -CGFloat(core.visualOffset) * width
         relayoutPagesIfRangeChanged()
         updateAccessibilityDescription()
         updateLabOverlay()
@@ -561,6 +652,7 @@ public final class PagingSurface: NSView {
         relayoutPagesIfRangeChanged()
         updateAccessibilityDescription()
         updateLabOverlay()
+        if !isTearingDown { onPageNavigationChange?() }
     }
 
     /// stale completion 拒绝（D3 三防线之一）→ 转发给 appEvents 消费者（telemetry 桥）。
@@ -574,10 +666,20 @@ public final class PagingSurface: NSView {
         appEvents.onInterruption?(info)
     }
 
+    /// Reconcile supplemental demand without replacing the driver or telemetry hook.
+    /// Call when the supplemental owner starts, finishes, cancels, or detaches work.
+    public func refreshFrameDemand() {
+        updateAnimationDriver()
+    }
+
     private func updateAnimationDriver() {
+        guard !isTearingDown else { return }
+        let supplementalNeedsFrames = supplementalFrameDemand?() ?? false
+        // The demand callback may synchronously tear down this surface.
+        guard !isTearingDown else { return }
         // 待决释放窗口内也保持驱动运行：帧驱动（runloop 60Hz 泵）每帧检查窗口期满 → 自动释放决策
         // （真实触控板慢滑 ended 后 runloop 停在 eventTracking mode，普通 Timer 不可靠）。
-        if core.isAnimating || pendingFinishSince != nil {
+        if core.isAnimating || pendingFinishSince != nil || supplementalNeedsFrames {
             frameDriver?.start()
         } else {
             frameDriver?.stop()
@@ -623,6 +725,7 @@ public final class PagingSurface: NSView {
     public func refreshPresentation() {
         guard !isTearingDown, let provider = contentProvider else { return }
         guard let latest = provider.servedRevision else { return } // 未就绪（nil）→ 中性占位，不刷新
+        if latest != servedRevision { cancelDirectNavigation() }
         switch core.state {
         case .idle, .cancelled:
             if latest != servedRevision {
@@ -646,7 +749,12 @@ public final class PagingSurface: NSView {
             core.setPageCount(newPageCount) // D6 三分支；内部触发 relayout（范围变化）
         }
         refreshLiveHostContent(revision: revision)
+        // A count change at idle offset zero may emit no Core offset/state event.
+        // Reconcile missing hosts after refreshing retained ones, without rebinding
+        // the existing range twice or waiting for a viewport resize.
+        relayoutPagesIfRangeChanged()
         pendingLatestSnapshot = nil
+        onPageNavigationChange?()
     }
 
     /// 同 revision 重载 seam（§8.3 / ADR-007 §2.2）：以**相同 `servedRevision`** 重渲染 live
@@ -660,6 +768,7 @@ public final class PagingSurface: NSView {
     public func reloadCurrentPresentation() {
         guard !isTearingDown, let provider = contentProvider else { return }
         guard provider.servedRevision != nil else { return } // 未就绪 → 无操作（中性占位）
+        cancelDirectNavigation()
         switch core.state {
         case .idle, .cancelled:
             applySameRevisionReload()
@@ -678,6 +787,7 @@ public final class PagingSurface: NSView {
             relayoutPages() // 显式 relayout：pageCount 变化（含缩小）后重算可见范围
         }
         refreshLiveHostContent(revision: effectiveRevisionForPass())
+        onPageNavigationChange?()
     }
 
     /// 本次 relayout pass 的有效 revision：pin 激活 → pin revision（手势全程同 revision）；
@@ -759,10 +869,16 @@ public final class PagingSurface: NSView {
 
         guard let range = currentRange() else {
             // pageCount == 0：清空全部页面。
-            for (_, host) in liveHosts { host.removeFromSuperview() }
+            for (_, host) in liveHosts {
+                host.removeFromSuperview()
+                // Detach first so the existing renderer cleanup can recognize
+                // this host as retired, then revoke bindings before returning.
+                host.clearForReuse()
+            }
             liveHosts.removeAll()
             liveHostCount = 0
             containerView.frame = CGRect(x: 0, y: 0, width: width, height: height)
+            updateAccessibilityDescription()
             onLayoutPerformed?(0)
             return
         }
@@ -783,6 +899,7 @@ public final class PagingSurface: NSView {
         for index in range.min...range.max where liveHosts[index] == nil {
             let reused = !reusePool.isEmpty
             let host: PageHostView = reused ? reusePool.removeLast() : PageHostView()
+            if let displayedStrings { host.relabel(strings: displayedStrings) }
             host.customRenderer = renderer
             let content = requestContent(pageIndex: index, revision: passRevision)
             host.render(
@@ -817,6 +934,7 @@ public final class PagingSurface: NSView {
         // 2c) 已有 live 页面全部按当前 page width 重新对齐（resize 后必做；
         //     事件驱动调用，非每帧，成本 = live 数量级，远小于每帧重建）。
         for (index, host) in liveHosts {
+            host.stagePageCount(core.pageCount)
             host.frame = CGRect(x: CGFloat(index) * width, y: 0, width: width, height: height)
         }
 
@@ -843,6 +961,7 @@ public final class PagingSurface: NSView {
         guard widthChanged || heightChanged else { return }
         lastLayoutWidth = bounds.width
         lastLayoutHeight = bounds.height
+        cancelDirectNavigation()
         if widthChanged {
             // 宽度变化 → Core pageWidth rebase（D6）+ 布局。
             core.setPageWidth(Double(bounds.width))
@@ -856,9 +975,15 @@ public final class PagingSurface: NSView {
     // MARK: - 可访问性（§7.3）
 
     private func updateAccessibilityDescription() {
-        guard !isTearingDown, core.pageCount > 0 else {
-            accessibilityDescription = ""
-            setAccessibilityValue("")
+        queuePresentationText()
+    }
+
+    private func renderAccessibilityDescription() {
+        guard !isTearingDown else { return }
+        guard core.pageCount > 0 else {
+            let text = displayedStrings?.gridText(.noPages) ?? GridTextKey.noPages.englishFallback
+            accessibilityDescription = text
+            setAccessibilityValue(text)
             return
         }
         let page: Int
@@ -870,7 +995,9 @@ public final class PagingSurface: NSView {
         default:
             page = core.committedPage
         }
-        let text = "Page \(page + 1) of \(core.pageCount)"
+        languageFormattingCount += 1
+        let text = displayedStrings?.page(page + 1, total: core.pageCount)
+            ?? "Page \(page + 1) of \(core.pageCount)"
         guard text != accessibilityDescription else { return }
         accessibilityDescription = text
         setAccessibilityValue(text)
@@ -879,6 +1006,10 @@ public final class PagingSurface: NSView {
     // MARK: - 诊断叠加（--paging-lab）
 
     private func updateLabOverlay() {
+        queuePresentationText()
+    }
+
+    private func renderLabOverlay() {
         guard labMode, !isTearingDown else { return }
         let stateName: String
         switch core.state {
@@ -888,6 +1019,7 @@ public final class PagingSurface: NSView {
         case .interrupted: stateName = "interrupted"
         case .cancelled: stateName = "cancelled"
         }
+        diagnosticFormattingCount += 1
         labOverlay.stringValue = String(
             format: "state=%@  page=%d  offset=%.3f  hosts=%d  rm=%@",
             stateName, core.committedPage, core.visualOffset, liveHostCount,

@@ -97,6 +97,42 @@ final class FolderIntegrationTests: XCTestCase {
         surface.teardown()
     }
 
+    func testAsyncFirstScanStagesFolderBeforeIdleCommit() async throws {
+        // 回归：首扫完成时 catalog 仍是 pending。生产 idle 顺序必须先从该 pending
+        // catalog 生成 folder，再由同一次 apply 原子提交 catalog + folder。
+        _ = try factory.makeApps(names: ["Alpha", "Beta", "Gamma", "Delta", "Echo", "Foxtrot"])
+        let surface = makeSurface(pageCount: 3, itemsPerPage: 35)
+        let assembly = AppCatalogAssembly(roots: [factory.root], loader: RecordingIconLoader())
+        assembly.folderLabEnabled = true
+        assembly.folderSnapshotGenerator = { catalog in
+            FolderLabFixture.makeGroups(from: catalog,
+                                        configuration: .init(groupSize: 2, enabled: true))
+        }
+        wireAssembly(assembly, to: surface)
+
+        // Same ordering as AppDelegate.installContentAssembly, with the newly fixed
+        // pending-aware folder rebuild included before the refresh commit.
+        assembly.refreshController.onStateChange = { [weak assembly, weak surface] state in
+            guard let assembly, let surface, !state.isBusy,
+                  surface.core.state == .idle else { return }
+            assembly.rebuildFolderCompositionIfNeeded()
+            _ = assembly.refreshController.applyPendingAtIdleBoundary(
+                currentPage: surface.core.committedPage)
+        }
+
+        assembly.begin()
+        let committed = await waitUntil {
+            assembly.provider.servedFolderSnapshot?.folderCount == 2
+        }
+        XCTAssertTrue(committed, "异步首扫应在同一 idle 提交中产生 folder 组合")
+        XCTAssertNotNil(assembly.provider.servedSnapshot)
+        XCTAssertFalse(assembly.provider.hasPendingFolderSnapshot,
+                       "catalog + folder 提交后不应残留 pending folder")
+
+        assembly.teardown()
+        surface.teardown()
+    }
+
     // MARK: - 1b. folder cell 成员计数接线（T-1E-folderlab-membercount-repair）
 
     func testFolderCellMemberCountWiredFromServedSnapshot() async throws {
@@ -137,6 +173,7 @@ final class FolderIntegrationTests: XCTestCase {
         let page = assembly.renderer.pageView(forPage: 0)
         let cell = try XCTUnwrap(page?.cell(at: 0), "渲染器应创建 page 0 实例")
         XCTAssertTrue(cell.isFolderCell, "folder cell 可区分")
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(cell.memberCountText, "\(expectedCount) items",
                        "folder cell 成员数来自 servedFolderSnapshot（非 0）")
         assembly.teardown()

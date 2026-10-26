@@ -1,0 +1,26 @@
+# Sources fixed native fixture entry: implementation checkpoint
+
+Date:2026-10-19. Current full parity goal remains incomplete; this is a test-harness prerequisite, not a Sources native acceptance claim.
+
+## Requirement / selected solution
+Approved Sources native Add/remove/readd/restart packet cannot run on the existing version1 test entry because all Applications descendants are alreadyCovered. A strict fixedversion2sources-v1marker resolves ONLY candidate-owned Applications/Baseline after existingCLIcontentconflictchecks, so optionalExtras remains inside the sameApplicationsadmission boundary. No AppDelegate/Options/production/source-admission/global-service changes. Version1exactprofile-onlymarker unchanged; oldbuildsreject2failclosed. No arbitrarypath orcommands.
+
+BothBaseline/Extrasvalidatedcanonical/nosymlink/existingdirectory/missingallowedbeforeoptionsreturn, withoutwrites. Pythonverifier mirrorsmarker/preset/pathvalidation. PackagingNATIVE_UI_TEST_FIXTURE=sources-v1requiresreservedbundle/profile/non-destructiveexplicitoptin; emptyfixturekeepsversion1. Invalidpreset/missingprofile/wrongbundle/badprofile/legacydestructive physically executed with a harmlessSwiftstub:5/5exit1,noSwiftinvocation,destinationnotcreated. Existingmetadata/plist/namespace/resource/overwriteguardsretained.
+
+## Evidence so far
+Main runtime development13/0, including actualunshownAppDelegateconfigure/makeContentAssembly andLocaladmissionintegration. First516-inputfrozenrun stoppedatPython12methods/1testhelpererror: malformedplistInvalidFileExceptionwasnotlistedasanexpectedrejection; productionCLIalreadyrejectsallparserexceptions. Exacttesthelpercorrectionincluded, rawfirstfailurepreserved. New516-inputr2serialPython/focused/full/Debug/actualRelease/packageverificationongoing; no Source nativeorwholegoalPASS. Packagingworkercompletedandclosed; stableindependentsourcereviewongoing. Current native largeiconapp/PID72970isoldseparateprofileandnotmodifiedbythiswork.
+
+## Scope / residual gates
+Source/test/scriptdeltaonly3changed+2addedagainstprior514inputs; unchanged Core/cache/renderer/folder/UI. Plannedcandidate `.build/candidates/sources-native-fixture-rc-20261019-r1/LaunchcopyUITest.app` and freshBaseline/Extrasownmetadata-onlyfixtures; neverreseedexistingprofiles. New metadata-onlyfixturesdonotcertifyrealAppLaunch. ChooserCancel/draftclose/AddApply/discovery/removefilesretain/readdlatentstate/automaticOFFmanualONnested-event/actualQuitrestartremainunexecuteduntilnewcandidatepassedandlaunched. No sign/install/Git/reference/formalapp/security/OSwallpaperaction. Humanlargeiconvisual,physical/device/IME/VoiceOver/wallpaperreliabilityandfullparityremainopen.
+
+
+## Final code/package and bounded native delivery
+Frozen516inputs:Python12/0,focused114/0,full3138/0,Debugexit0,actualReleaseexit0,packageexit0. Native-entryverifieracceptsstrictversion2; packaged3languages/365keys/resource-only1095entriesexit0. HumeindependentSOURCEACCEPT,no scopedfindings; staticonly,closed. Pre-existingPython5namespaceguardsvsSwift'sadditionalLibrary/LaunchActivitychecksareexplicitlynotclaimedwhollyequivalent. No newbroaderaccessintroduced.
+
+Source-onlytestcandidate `.build/candidates/sources-native-fixture-rc-20261019-r1/LaunchcopyUITest.app`, executableSHA `b88e09688a7af10d71bf9f360c42933d90839336f8ef2f5ae8c8cf571e60956b`, plistSHA `aa64c631dd983a3b5468caf185ed3798ba8e4b48bd90f61dd636d251735283e5`. Unsigned/uninstalled, ownfourmetadata-onlyfixtures, no oldprofilepref/layout/resource import.
+
+NormalFinderOpenPID84225 showedONLY2Baselineapps/fixedBaseline/automaticON. ChooserCancelleftdraftempty. ChoosingExtrasreportedDraft; closingSettingskept2Baselineapps (draftretainedonreopen,notdiscardedandnotsaved). ApplyreportedSavedandApplied;4appsdiscoveredandquerySourcepreserved. AutomaticOFF+Applyreporteddisabled/saved. NormalQuit/exactabsence, sameFinderOpenPID85587:4apps,Extrasinpopup,checkboxOFF/statusdisabledpersisted. FinalnormalQuit/exactabsence; SourceprofileintentionallysavedExtras+automaticOFFforremainingpacket, allfourauthoredmetadatafilesunchanged. No newnativeclaimforremove/readdlatentorganizationornestedwatchereventyet.
+
+Restoredthehuman'sUNCHANGEDlargeiconvisualcandidate(dc4ed86f)throughnormalFinderOpen,nowPID86437/ordinarywindow,queryempty/folderclosed. All249seededvisualfixturefilesunchanged;516currentsourceinputsstillmatch. Thatoldervisualcandidate'sneutralwallpaperdiagnosticnowREADYafterreopen; earlier4m34sloading/source-openwaitremainsrecordedandcauseunresolved. Thisisrecovery,notaneffectofatest-entrycodepatchbecausevisualbinaryitselfwasnotrebuilt/replaced. NativeSourceinstancesalsoreportedREADY; noOSsource/permission/cachepurgechangeorpersonalwallpaperartifact.
+
+Exactreceipts: `.build/verification/20261019/sources-native-fixture-entry/final-verification-r2.json`, `native-r1.json`, `source-inputs-r2.json`, `source-delta-r2.json`, earlynegativecasesandretainedfirstPythonfailure/logs. Allagent/build/testjobsterminal. NextsafeactualworkisremainingSource remove/readd/latentstate +automaticOFF/manualON/nestedownedeventpacketonthissavedtestprofile. Fullgoalandhumanlargeicon/physical/device/IME/VoiceOvergatesremainincomplete.

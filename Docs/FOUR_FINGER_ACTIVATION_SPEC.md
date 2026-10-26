@@ -84,3 +84,7 @@ MultitouchSupportBackend（真实后端，T-G-P6）
 - T-1G-B/C/D/E（窗口/驻留/菜单栏/快捷键/Hot Corner/AppDelegate 集成）待物理门回填 + Chief 确认解除。
 - M01-M12 实机矩阵、能耗 A/B 依赖集成后执行。
 - 分发未评估（ADR-013 §9）。
+
+
+## 2026-10-22 optional outward Hide supersession
+The user explicitly approved default-OFF outward resident Hide in the idle main grid or committed Library, preserving inward Show and refusing protected work. The older inward-only/no-Hide or reserved-outward wording remains historical default-mode evidence, not the current optional-mode contract. Authority: `Docs/FOUR_FINGER_OUTWARD_HIDE_SPEC_2026-10-22.md` and matching final results. Code3550/0, build/package/native preference restart are verified, but physical recognition/calibration remains pending; current UI-test entry is fake-only and must not be relaxed to manufacture acceptance. Other expanded pinch/toggle/cold-outward/three-finger variants remain reserved. A separate real-device environment proposal is not an approved backend change.

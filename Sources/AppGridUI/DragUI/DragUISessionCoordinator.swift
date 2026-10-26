@@ -145,6 +145,9 @@ public final class DragUISessionCoordinator {
     public var geometryProvider: (DragScope) -> DragGeometry? = { _ in nil }
     /// commit seam：mutation 成功 → 交出新布局（T-1F-E 接 provider/persist）。
     public var onCommit: (PersistentWorkspaceLayout) -> Void = { _ in }
+    /// Computes a new-folder title from committed snapshots after drop validation.
+    /// Never perform IO, present UI, or mutate owners in this synchronous policy.
+    public var folderCreationTitleProvider: FolderCreationTitleProvider?
     /// cell 点击派发（mouse-up 未过阈值；app 启动 / folder 打开 / 成员激活由装配层分流）。
     public var onCellClick: (AppGridCellView) -> Void = { _ in }
     /// overlay 面板外点击（mouse-up 未过阈值；→ 关闭 folder）。
@@ -160,6 +163,9 @@ public final class DragUISessionCoordinator {
     /// onOverlayBlankClick 均不达）；Path A surface 识别器不受影响。
     /// 依据：census s1_draggate_closed + harness 测试 6（testDragGateClosed…）。
     public var dragGate: () -> Bool = { true }
+    /// Allows click arbitration while preventing drag initiation (for active search).
+    /// The complete pointer-down gate above retains its existing semantics.
+    public var dragStartGate: () -> Bool = { true }
     /// 会话状态变化（视觉/守卫/测试）。
     public var onSessionStateChange: ((DragSessionState) -> Void)?
 
@@ -174,18 +180,26 @@ public final class DragUISessionCoordinator {
     /// 中性拖拽视觉。
     public let visuals: DragUIVisuals
     /// 是否正在仲裁（空白点击守卫 / 测试）。
-    public var isSessionActive: Bool { controller.state != .idle || pendingBlankPress != nil }
+    public var isSessionActive: Bool {
+        hasPointerOwnership || controller.state != .idle || pendingBlankPress != nil || isClickOnlyPress
+    }
 
     private let clock: DragClock
     private var currentScope: DragScope?
     private var sourceCell: AppGridCellView?
     private var pendingBlankPress: DragPoint?
+    // A blank/fallback candidate can become ineligible without releasing the held pointer.
+    private var hasPointerOwnership = false
+    private var sessionEndGeneration: UInt64 = 0
     /// Defect-3 修复 + N3（T-1F-B8-wave-c Stage 2）扩展：stale-source / 解析失败点击回退。
     /// controller.pointerDown 未产生 .pressed 时武装：源被 sourcePresent 拒绝（提交后
     /// 布局已移动源），或 resolveSource 失败（bindingToken nil / 查无 record）而 sourceCell
     /// 非 nil；mouse-up 未过阈值 → onCellClick(回退 cell)；过阈值 → no-op 清除。
     private var clickFallbackCell: AppGridCellView?
     private var clickFallbackDownPoint: DragPoint?
+    /// Explicit search click arbitration is active even though the drag controller stays idle.
+    /// Historical stale-source fallback retains its existing non-session diagnostic semantics.
+    private var isClickOnlyPress = false
     private var currentPointer: DragPoint?
     private var currentGeometry: DragGeometry?
     private var edgeTimer: Timer?
@@ -213,14 +227,24 @@ public final class DragUISessionCoordinator {
     /// 生产唯一驱动点：AppDelegate.refreshFolderOverlay（folder 打开 → overlay；
     /// folder 关闭 → surface）。同值重复调用幂等。
     public func setVisualHost(_ newHost: NSView?) {
+        if let oldHost = visualHost, let newHost, oldHost !== newHost, let pointer = currentPointer {
+            let converted = newHost.convert(NSPoint(x: CGFloat(pointer.x), y: CGFloat(pointer.y)), from: oldHost)
+            currentPointer = DragPoint(x: Double(converted.x), y: Double(converted.y))
+        }
         visualHost = newHost
         visuals.setHost(newHost)
     }
 
-    /// folder move-out：折叠前再抓源 cell 位图；切宿主后把 preview 提到窗口最顶层。
+    /// Capture the member while its panel is available, then elevate the durable preview.
     public func prepareAndElevateMoveOutPreview(above overlay: NSView) {
-        // 折叠前最后一次从源 cell 抓图（此时 panel 仍可见）。
+        guard !isTornDown else { return }
         visuals.capturePreview(from: sourceCell)
+        elevateMoveOutPreview(above: overlay)
+    }
+
+    /// Re-elevate cached content after a host switch without reading the source cell.
+    public func elevateMoveOutPreview(above overlay: NSView) {
+        guard !isTornDown else { return }
         let pointer = currentPointer ?? DragPoint(x: 0, y: 0)
         let point = NSPoint(x: CGFloat(pointer.x), y: CGFloat(pointer.y))
         // overlay 盖住 surface；preview 必须挂到 contentView 且在 overlay 之上，否则「图标消失」。
@@ -233,14 +257,16 @@ public final class DragUISessionCoordinator {
     /// - sourceCell == nil → overlay 面板外空白按下（mouse-up 未过阈值 → onOverlayBlankClick）。
     /// - memberFolderID != nil → folder 成员源（.folderMember）。
     public func pointerDown(locationInWindow: NSPoint, sourceCell: AppGridCellView?, memberFolderID: FolderID?) {
+        PointerInputDiagnostics.record(.coordinatorDown)
         guard !isTornDown else { ClickCensus.hit(ClickCensus.Sink.pointerDownTornDown); return }
         // T-1F-B8-wave-c census（N1 观测）：抑制标志仍 true 而无任何活会话
         //（controller idle 且无空白候选）→ 上一会话泄漏的抑制滞留。
         if isSuppressingClickRecognition, !isSessionActive {
             ClickCensus.hit(ClickCensus.Sink.suppressionResident)
         }
-        guard dragGate() else { ClickCensus.hit(ClickCensus.Sink.dragGateClosed); return }
-        guard let host = visualHost else { ClickCensus.hit(ClickCensus.Sink.visualHostNil); return }
+        guard dragGate() else { PointerInputDiagnostics.record(.dragGateDenied); ClickCensus.hit(ClickCensus.Sink.dragGateClosed); return }
+        guard let host = visualHost else { PointerInputDiagnostics.record(.visualHostMissing); ClickCensus.hit(ClickCensus.Sink.visualHostNil); return }
+        hasPointerOwnership = true
         let hostPoint = host.convert(locationInWindow, from: nil)
         let point = DragPoint(x: Double(hostPoint.x), y: Double(hostPoint.y))
         currentPointer = point
@@ -250,8 +276,23 @@ public final class DragUISessionCoordinator {
             previous.setClickRecognitionEnabled(true)
         }
 
+        isClickOnlyPress = false
+        if !dragStartGate() {
+            PointerInputDiagnostics.record(.clickOnly)
+            // Use the existing thresholded click fallback without entering the drag controller.
+            // Suppress both click recognizers until release so manual delivery launches once.
+            isClickOnlyPress = true
+            self.sourceCell = sourceCell
+            clickFallbackCell = sourceCell
+            clickFallbackDownPoint = sourceCell == nil ? nil : point
+            pendingBlankPress = sourceCell == nil ? point : nil
+            beginArbitration()
+            return
+        }
+
         let source = resolveSource(sourceCell: sourceCell, memberFolderID: memberFolderID)
         if source == nil {
+            PointerInputDiagnostics.record(.sourceMissing)
             // T-1F-B8-wave-c census（N3 观测）：sourceCell ≠ nil 但解析失败
             //（bindingToken nil / 查无 record）= 原死路 A；sourceCell == nil = 真空白（对照）。
             ClickCensus.hit(sourceCell == nil
@@ -271,7 +312,7 @@ public final class DragUISessionCoordinator {
             }
             return
         }
-        guard let layout = layoutProvider() else { ClickCensus.hit(ClickCensus.Sink.layoutProviderNil); return }
+        guard let layout = layoutProvider() else { PointerInputDiagnostics.record(.layoutMissing); ClickCensus.hit(ClickCensus.Sink.layoutProviderNil); return }
         self.sourceCell = sourceCell
         let events = controller.pointerDown(at: point, source: source, layout: layout,
                                             catalogGeneration: catalogGenerationProvider())
@@ -280,6 +321,7 @@ public final class DragUISessionCoordinator {
             clickFallbackCell = nil
             clickFallbackDownPoint = nil
         } else if sourceCell != nil {
+            PointerInputDiagnostics.record(.sourceStale)
             // stale source（提交后布局已移动源）：武装点击回退，不 arm 空白按下。
             ClickCensus.hit(ClickCensus.Sink.fallbackArmed)
             clickFallbackCell = sourceCell
@@ -290,6 +332,7 @@ public final class DragUISessionCoordinator {
 
     /// pointer 移动：阈值仲裁 → dragging；edge 调度；intent 分类（全部在 controller 内）。
     public func pointerDragged(locationInWindow: NSPoint) {
+        PointerInputDiagnostics.record(.pointerDragged)
         guard !isTornDown else { return }
         guard let host = visualHost else { return }
         let hostPoint = host.convert(locationInWindow, from: nil)
@@ -306,13 +349,15 @@ public final class DragUISessionCoordinator {
             // stale-source 拖拽尝试：过阈值 → no-op 清除（不进入 controller 路径）。
             if let down = clickFallbackDownPoint,
                point.distance(to: down) >= parameters.dragStartThresholdPT {
-                // BUG6 Wave C 堵漏：过阈值清除 fallback 同样要 endSession，恢复抑制状态。
-                endSession()
+                // Discard the click candidate and restore suppression, but keep the
+                // physical pointer owned until up/cancel; appearance must still wait.
+                endSession(keepingPointerOwnership: true)
             }
             return
         }
         guard controller.state != .idle else { return }
         guard let scope = currentScope, let geometry = geometryProvider(scope) else {
+            PointerInputDiagnostics.record(.geometryMissing)
             // T-1F-D1-fix-e1 + folder 拖拽诊断（s20）：folder scope geometry nil →
             // 本次 move 无操作（preview/蓝条不跟）。
             if let cs = currentScope, case .folder = cs {
@@ -320,8 +365,9 @@ public final class DragUISessionCoordinator {
             }
             return
         }
-        guard let layout = layoutProvider() else { return }
+        guard let layout = layoutProvider() else { PointerInputDiagnostics.record(.layoutMissing); return }
         currentGeometry = geometry
+        PointerInputDiagnostics.record(.movementProcessed)
         let events = controller.pointerMoved(to: point, geometry: geometry, layout: layout,
                                              catalogGeneration: catalogGenerationProvider())
         handleEvents(events)
@@ -347,8 +393,25 @@ public final class DragUISessionCoordinator {
 
     /// pointer-up：未过阈值 → click 派发；过阈值 → drop 解析（commit/noOp/reject）。
     public func pointerUp(locationInWindow: NSPoint) {
+        PointerInputDiagnostics.record(.pointerUp)
+        if controller.activeTransaction == nil { PointerInputDiagnostics.record(.releaseWithoutTransaction) }
+        let ownedPointer = hasPointerOwnership
+        let previousEndGeneration = sessionEndGeneration
+        hasPointerOwnership = false
+        defer {
+            // Controller-idle auxiliary releases otherwise bypass endSession's notification.
+            // Do not duplicate a normal end, or notify over a reentrant newer press.
+            if !isTornDown, ownedPointer, !isSessionActive, sessionEndGeneration == previousEndGeneration {
+                onSessionStateChange?(.idle)
+            }
+        }
         guard !isTornDown else { return }
-        guard let host = visualHost else { return }
+        guard let host = visualHost else {
+            // Host loss invalidates the controller session as well as UI arbitration.
+            if controller.state != .idle { cancel(reason: .windowResign) }
+            else if ownedPointer { endSession() }
+            return
+        }
         let hostPoint = host.convert(locationInWindow, from: nil)
         let point = DragPoint(x: Double(hostPoint.x), y: Double(hostPoint.y))
         currentPointer = point
@@ -397,6 +460,8 @@ public final class DragUISessionCoordinator {
         }
 
         if controller.state == .pressed {
+            PointerInputDiagnostics.record(.releaseWhilePressed)
+            if controller.releaseExceedsDragThreshold(at: point) { PointerInputDiagnostics.record(.releaseDisplaced) }
             // click 路径：controller 直接 reset + .clicked（几何/布局不参与）。
             let events = controller.pointerUp(at: point,
                                               geometry: DragGeometry(itemFrames: [], containerWidth: 0, page: 0, pageCount: 1),
@@ -420,18 +485,22 @@ public final class DragUISessionCoordinator {
         }
         currentGeometry = geometry
         let events = controller.pointerUp(at: point, geometry: geometry, layout: layout,
-                                          catalogGeneration: catalogGenerationProvider())
+                                          catalogGeneration: catalogGenerationProvider(),
+                                          folderTitleProvider: folderCreationTitleProvider)
         handleEvents(events)
     }
 
     /// 统一 cancel（ESC/resign/refresh/search/titleEdit/overlayClose/teardown/secondDrag/layoutChanged）。
     public func cancel(reason: DragCancelReason) {
         guard !isTornDown else { return }
+        let wasClickOnlyPress = isClickOnlyPress
+        let ownedPointer = hasPointerOwnership
         pendingBlankPress = nil
         clickFallbackCell = nil
         clickFallbackDownPoint = nil
-        guard controller.state != .idle else { return }
-        _ = controller.cancel(reason: reason)
+        guard controller.state != .idle || wasClickOnlyPress || ownedPointer else { return }
+        PointerInputDiagnostics.recordCancellation(reason)
+        if controller.state != .idle { _ = controller.cancel(reason: reason) }
         endSession()
     }
 
@@ -466,10 +535,12 @@ public final class DragUISessionCoordinator {
         for event in events {
             switch event {
             case .pressed:
+                PointerInputDiagnostics.record(.pressed)
                 currentScope = controller.activeTransaction?.scope
                 beginArbitration()
                 onSessionStateChange?(.pressed)
             case .dragBegan:
+                PointerInputDiagnostics.record(.dragBegan)
                 ClickCensus.hit(ClickCensus.Sink.dragBegan)
                 let pointer = currentPointer ?? DragPoint(x: 0, y: 0)
                 visuals.showPreview(sourceCell: sourceCell,
@@ -489,16 +560,19 @@ public final class DragUISessionCoordinator {
             case .edge(let edgeEvent):
                 handleEdgeEvent(edgeEvent)
             case .clicked:
-                dispatchClick()
-                endSession()
+                PointerInputDiagnostics.record(.clicked)
+                completeClick()
             case .committed(let newLayout):
+                PointerInputDiagnostics.record(.committed)
                 ClickCensus.hit(ClickCensus.Sink.dragCommitted)
                 onCommit(newLayout)
                 endSession()
             case .noOp:
+                PointerInputDiagnostics.record(.noOp)
                 ClickCensus.hit(ClickCensus.Sink.dragNoOp)
                 endSession()
             case .cancelled(let reason):
+                PointerInputDiagnostics.recordCancellation(reason)
                 if reason == .secondDrag {
                     // 旧 session 被新 pointer-down 取代：清旧视觉/计时，保持仲裁
                     // （新 session 的 .pressed 随后到达；cell 级抑制已在 pointerDown 切换）。
@@ -509,6 +583,7 @@ public final class DragUISessionCoordinator {
                     endSession()
                 }
             case .rejected:
+                PointerInputDiagnostics.record(.rejected)
                 ClickCensus.hit(ClickCensus.Sink.dragRejected)
                 endSession()
             }
@@ -527,7 +602,8 @@ public final class DragUISessionCoordinator {
     }
 
     private func performPageTurn(_ zone: EdgeZone) {
-        switch currentScope {
+        let visibleScope: DragScope? = currentGeometry?.topLevelMoveOutBounds != nil ? .topLevel : currentScope
+        switch visibleScope {
         case .topLevel:
             let direction: KeyboardPageDirection = zone == .left ? .previous : .next
             _ = topLevelPageTurn(direction, ProcessInfo.processInfo.systemUptime)
@@ -540,8 +616,17 @@ public final class DragUISessionCoordinator {
         scheduleEdgeTimerIfNeeded()
     }
 
-    private func dispatchClick() {
-        if let cell = sourceCell {
+    /// Retain the original target while retiring old ownership before external callbacks.
+    private func completeClick() {
+        let cell = sourceCell
+        let binding = cell?.bindingToken
+        let releaseGeneration = sessionEndGeneration &+ 1
+        endSession()
+        // Idle observers may cancel, tear down, or reuse the target. Never activate a
+        // replacement binding; a fresh admitted press must keep its own state intact.
+        guard !isTornDown, sessionEndGeneration == releaseGeneration,
+              cell?.bindingToken == binding else { return }
+        if let cell {
             ClickCensus.hit(ClickCensus.Sink.dispatchClickCell)
             onCellClick(cell)
         } else {
@@ -559,7 +644,10 @@ public final class DragUISessionCoordinator {
         clickRecognitionSuppressor?(false)
     }
 
-    private func endSession() {
+    private func endSession(keepingPointerOwnership: Bool = false) {
+        let keepPointer = keepingPointerOwnership && hasPointerOwnership
+        hasPointerOwnership = keepPointer
+        sessionEndGeneration &+= 1
         if isSuppressingClickRecognition {
             isSuppressingClickRecognition = false
             sourceCell?.setClickRecognitionEnabled(true)
@@ -571,11 +659,12 @@ public final class DragUISessionCoordinator {
         pendingBlankPress = nil
         clickFallbackCell = nil
         clickFallbackDownPoint = nil
+        isClickOnlyPress = false
         currentPointer = nil
         currentGeometry = nil
         invalidateEdgeTimer()
         visuals.clearAll()
-        onSessionStateChange?(.idle)
+        if !keepPointer { onSessionStateChange?(.idle) }
     }
 
     // MARK: - 源身份解析
@@ -593,12 +682,22 @@ public final class DragUISessionCoordinator {
         }
         guard let appID = cell.bindingToken?.appID as? AppID,
               let ref = appReference(for: appID) else { return nil }
+        if let layout = layoutProvider(), !layout.topLevelOrder.contains(.app(ref)),
+           let owner = layout.folders.first(where: { $0.members.contains(ref) }),
+           layout.topLevelOrder.contains(.folder(owner.id)) {
+            // A visible singleton of a latent group is still owned by that group.
+            // Dragging reorders the group; clicking continues to launch this app.
+            return .topLevelFolder(owner.id)
+        }
         return .topLevelApp(ref)
     }
 
     private func appReference(for appID: AppID) -> PersistentAppReference? {
         guard let snapshot = catalogSnapshotProvider() else { return nil }
         guard let record = snapshot.records.first(where: { $0.id == appID }) else { return nil }
+        if let layout = layoutProvider(), let stored = WorkspaceAppReferenceResolver.reference(for: record, in: layout) {
+            return stored
+        }
         return PersistentAppReference.from(record: record)
     }
 

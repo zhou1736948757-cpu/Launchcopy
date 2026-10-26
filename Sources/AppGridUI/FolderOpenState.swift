@@ -19,7 +19,7 @@ import Foundation
 /// 作废在途成员图标异步回调（打开 A 后打开 B，A 的旧回调被 generation 门控拒绝）。
 public final class FolderOpenState {
 
-    /// 每页成员数缺省（与顶层 itemsPerPage 对齐）。
+    /// Legacy standalone default; integrated folders use their applied layout capacity.
     public static let defaultMembersPerPage = 35
 
     /// 当前打开的文件夹条目（nil = 关闭）。
@@ -29,10 +29,15 @@ public final class FolderOpenState {
     /// 打开/关闭/翻页时递增；作废在途成员图标回调（stale defense）。
     public private(set) var generation: UInt64 = 0
     /// 每页成员数（≥1）。
-    public let membersPerPage: Int
+    public private(set) var membersPerPage: Int
+    /// Applied folder columns, independent of the outer grid.
+    public private(set) var columns: Int
+    /// False while useful member geometry cannot be presented safely.
+    public private(set) var isMemberPresentationAvailable = true
 
-    public init(membersPerPage: Int = FolderOpenState.defaultMembersPerPage) {
+    public init(membersPerPage: Int = FolderOpenState.defaultMembersPerPage, columns: Int = 5) {
         self.membersPerPage = max(membersPerPage, 1)
+        self.columns = max(columns, 1)
     }
 
     // MARK: - 查询
@@ -44,21 +49,40 @@ public final class FolderOpenState {
     /// 内部页总数（0 = 无成员/未打开）。
     public var innerPageCount: Int {
         guard let entry = openEntry, !entry.members.isEmpty else { return 0 }
-        return (entry.members.count + membersPerPage - 1) / membersPerPage
+        return (entry.members.count - 1) / membersPerPage + 1
     }
 
     public func isOpen(_ folderID: FolderID) -> Bool { openEntry?.id == folderID }
 
     /// 指定内部页的成员 AppID 切片（越界 → 空数组）。
     public func members(onPage page: Int) -> [AppID] {
-        guard let entry = openEntry else { return [] }
+        guard let entry = openEntry, page >= 0, page < innerPageCount else { return [] }
         let start = page * membersPerPage
-        guard start >= 0, start < entry.members.count else { return [] }
-        let end = min(start + membersPerPage, entry.members.count)
+        let end = start + min(membersPerPage, entry.members.count - start)
         return Array(entry.members[start..<end])
     }
 
     // MARK: - 变更（均递增 generation）
+
+    /// Atomically replaces the folder presentation snapshot without mutating membership.
+    /// A surviving selected anchor wins; otherwise retain the old visible leading member.
+    /// Identical normalized snapshots are no-ops, including when given another anchor.
+    public func reconfigure(columns: Int, membersPerPage: Int, anchor: AppID?, isAvailable: Bool) {
+        let newColumns = max(columns, 1)
+        let newCapacity = max(membersPerPage, 1)
+        guard self.columns != newColumns || self.membersPerPage != newCapacity ||
+                isMemberPresentationAvailable != isAvailable else { return }
+
+        let oldLeadingIndex = innerPage * self.membersPerPage
+        let anchorIndex = anchor.flatMap { openEntry?.members.firstIndex(of: $0) }
+        let retainedIndex = anchorIndex ?? min(oldLeadingIndex, max(memberCount - 1, 0))
+
+        self.columns = newColumns
+        self.membersPerPage = newCapacity
+        isMemberPresentationAvailable = isAvailable
+        innerPage = min(retainedIndex / newCapacity, max(innerPageCount - 1, 0))
+        generation &+= 1
+    }
 
     /// 打开文件夹：重置内部页到 0，递增 generation。
     public func open(_ entry: FolderEntry) {

@@ -56,6 +56,7 @@ final class FolderCellTests: XCTestCase {
         XCTAssertTrue(cell.isFolderCell, "folder cell 与 app cell 可区分")
         XCTAssertTrue(cell.isFolderSymbolVisible, "folder cell 显示中性符号")
         XCTAssertEqual(cell.nameLabel.stringValue, "Group 1")
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(cell.memberCountText, "2 items", "folder cell 显示成员计数")
         XCTAssertEqual(loader.pendingKeyCount, 0, "folder cell 绝不请求 app 图标")
     }
@@ -147,6 +148,7 @@ final class FolderCellTests: XCTestCase {
 
         XCTAssertEqual(cell.accessibilityRole(), .button, "folder cell 可激活（role = button）")
         XCTAssertEqual(cell.accessibilityLabel(), "Group 1", "无障碍读完整标题")
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(cell.accessibilityHelp(), "Folder with 2 items", "无障碍描述成员计数")
     }
 

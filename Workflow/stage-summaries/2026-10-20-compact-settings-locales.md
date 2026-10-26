@@ -1,0 +1,14 @@
+# Compact Settings locales — 2026-10-20
+
+## Objective / facts / boundaries
+Close only the unmatched native EN/JA selected-long-root/Sources↔Appearance presentation gap from SETTINGS_SOURCE_PATH_WIDTH_RESULTS.md.500pt initial Settings content width; old actual Chinese check valid, no need reopen Sources save/watch/restart gates. Spec/protocol Docs/COMPACT_SETTINGS_LOCALE_NATIVE_PROTOCOL_2026-10-20.md. Main exclusive native owner; no shared-file/parallel UI or source changes. Outward Hide question remains pending, no implementation.
+
+## Protocol / next action
+Reverify current candidate553input baseline and own profile; create one empty long-name child under its Applications, add/select only an unsaved Sources draft, compare compact EN/JA Sources/Appearance/Sources dimensions and visible text, restore original locale/source draft and main state. No SourcesApply/Refresh/OS/global/consent/destructive/formaldata or source/build/test action. Record actual outcomes and exact rollback; no current acceptance yet. Previous turn prepared a major semantic decision, not a gesture implementation; do not substitute that optional decision for available bounded native verification.
+
+## Admission finding / protocol adaptation
+InitialnativeobservedSystem,0extraSources,automaticON,compact1000×1184px. NormalAddchooser correctlyrejected newemptychild as alreadycovered byfixedApplications; no draft added/apply/refresh. GoTo asynchronouscompletion madeone staleelementclickfail; freshselectorstateconfirmedexactownedemptydir beforeSelect. Notaproductbug. Reuse existing approvedv2sources-v1 entry in auniquesame-sourcecandidate; no policybypass. MainnormalownQuit/open only and restoreoriginalcandidateaftertargetedtest. Protocolrevisionrecorded, no productionchange. RuntimeCUAbindingreset found/reboundfullpath; no errorrecovery alteredappsource.
+
+## Completed 2026-10-21 — bounded native presentation PASS
+
+Dedicated same-executable sources-v1 entry accepted the own empty sibling only as an unsaved draft. English/Japanese Sources→Appearance→Sources retained full selected identity and compact layout; scrolling reached merged capacity/default controls. Japanese parsed screenshots1000×1184px; English inline-inspected without retained numeric array after runtime reset. Restored System/zero draft/automaticON, never SourcesApply/Refresh, normal dedicatedQuit/exactabsence. Reopened original json-inspection candidate PID29853, main/emptyquery/folderclosed/settingsclosed/wallpaperREADY; original LibraryON.553recordedinputs/249knownfixturefiles/dedicatedmetadata/both exe hashes unchanged. No source/newtest/OS/formaldata/sign/install/Git/physicalperformance/independentlivePASS. Result Workflow/results/COMPACT_SETTINGS_LOCALES_NATIVE_RESULTS_2026-10-21.md. No new defect established. Fullparityincomplete, optional outwardHide still PROPOSED.

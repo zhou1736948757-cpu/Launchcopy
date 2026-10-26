@@ -90,23 +90,69 @@ final class AppLaunchControllerTests: XCTestCase {
 
     func testClickHitPathReachesCell() async throws {
         _ = try factory.makeApps(names: ["Alpha"])
+        // 从 cell 内容区域换算到 surface 坐标 → hitTest 命中 → 视图链找到 cell → 启动。
+        // 无窗口时也强制整树 layout；必要时挂到离屏窗口
+        // 以保证 AppKit hitTest 沿 superview 链下探（与手势识别器同一管线）。
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = surface
+        defer { window.contentView = nil }
         _ = try await readyCell()
         controller = AppLaunchController(
             surface: surface, assembly: assembly, launcher: launcher
         )
-        // 从 cell 中心换算到 surface 坐标 → hitTest 命中 → 视图链找到 cell → 启动。
-        // 先强制页布局（无窗口测试中 cell frame 依赖显式 layout）。
         guard let page = assembly.renderer.pageView(forPage: 0),
               let cell = page.cell(at: 0) else {
             XCTFail("应有 page/cell")
             return
         }
-        page.layout()
-        let cellFrame = cell.convert(cell.bounds, to: surface)
-        let point = NSPoint(x: cellFrame.midX, y: cellFrame.midY)
+        surface.layoutSubtreeIfNeeded()
+        page.layoutSubtreeIfNeeded()
+        cell.layout()
+        XCTAssertGreaterThan(cell.bounds.width, 0)
+        XCTAssertGreaterThan(cell.iconView.frame.width, 0)
+
+        // icon±4 契约（T-1J-LM-HITREVERT 恢复）：点击点必须在图标热区内才进入启动链。
+        let contentPointInCell = NSPoint(x: cell.iconView.frame.midX, y: cell.iconView.frame.midY)
+        let contentPointInSuperview = cell.convert(contentPointInCell, to: cell.superview)
+        XCTAssertTrue(cell.hitTest(contentPointInSuperview) === cell,
+                      "预检：cell 图标热区点（父视图坐标）应命中 cell；cell=\(cell.frame)")
+        let point = cell.convert(contentPointInCell, to: surface)
         let outcome = controller.handleClick(at: point)
         XCTAssertEqual(outcome, .launched, "命中测试路径（与手势识别器同一管线）应启动")
         XCTAssertEqual(launcher.opened.count, 1)
+    }
+
+    /// icon±4 契约：nameLabel 中点在图标热区之外 → handleClick 不得到达 handleCell，
+    /// 结果 = rejectedNoBinding（与空白路径同一分类出口）。
+    func testClickAtNameLabelRejectedNoBinding() async throws {
+        _ = try factory.makeApps(names: ["Alpha"])
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = surface
+        defer { window.contentView = nil }
+        _ = try await readyCell()
+        controller = AppLaunchController(
+            surface: surface, assembly: assembly, launcher: launcher
+        )
+        guard let page = assembly.renderer.pageView(forPage: 0),
+              let cell = page.cell(at: 0) else {
+            XCTFail("应有 page/cell")
+            return
+        }
+        surface.layoutSubtreeIfNeeded()
+        page.layoutSubtreeIfNeeded()
+        cell.layout()
+
+        let labelPointInCell = NSPoint(x: cell.nameLabel.frame.midX, y: cell.nameLabel.frame.midY)
+        let labelPointInSuperview = cell.convert(labelPointInCell, to: cell.superview)
+        XCTAssertNil(cell.hitTest(labelPointInSuperview),
+                     "预检：nameLabel 点在 icon±4 热区之外，hitTest 不得命中 cell")
+        let point = cell.convert(labelPointInCell, to: surface)
+        let outcome = controller.handleClick(at: point)
+        XCTAssertEqual(outcome, .rejectedNoBinding,
+                       "nameLabel 点击不得进入启动链（icon±4 契约；落空走空白分类）")
+        XCTAssertTrue(launcher.opened.isEmpty, "label 点击不得启动任何 bundle")
     }
 
     func testStaleRevisionRejected() async throws {

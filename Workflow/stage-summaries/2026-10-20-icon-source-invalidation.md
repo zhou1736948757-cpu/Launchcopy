@@ -1,0 +1,31 @@
+# Icon source invalidation — 2026-10-20
+
+## Objective / baseline
+Close the concrete same-AppID/new-winning-URL icon risk from ARCHITECTURE_SERVICES_AUDIT. Journal lifecycle stage completed3336/0 and r4source/test-sourcePASS; newest a35442f3package unlaunched, original fd395b00 runtime untouched. Current source baseline hashes under .build/verification/20261020/icon-source-invalidation/. Whole parity remains incomplete; first-swipe hitch user-deferred, not CPU-proven/fixed.
+
+## Plan / ownership
+Spec Docs/ICON_SOURCE_INVALIDATION_SPEC.md. Main owns pipeline, resolver/assembly and root search wiring, plus pipeline tests. One disjoint worker owns only new integration-test file; Main owns serial SwiftPM/build/package. Later independent source/test-source review. No reference/formal data/native UI/process/Git mutations. At most3agents includingMain.
+
+## Known risks / acceptance
+Cache purge alone is insufficient: old in-flight results and accepted queued MainActor deliveries both need revocation. Commit authority is servedSnapshot, not a newer pending scan head. Preserve unaffected caches, opaque keys and no source tombstone history. No same-path content refresh claim. Tests/build/review not yet run for this scope; previous3336 not current-source acceptance.
+
+## Next action
+Implement targeted invalidation plus delivery receipts and shared commit synchronization; verify controlled generated-image and source integration traces before packaging. Keep current runtime unchanged.
+
+## Implementation / first checks
+Main changed3production paths: pipeline invalidation plus queued callback receipts; resolver delta and served-catalog synchronization with revision fast path; root search commit calls that shared operation before apply/render. Main5pipeline tests passed0failures (new-pipeline.log); provisional existing43tests/0 covered ordinary pipeline/assembly behavior. Worker Hooke added only6integration methods in new AppCatalogIconSourceTests.swift and closed; explicitly did not claim actual AppDelegate/native wiring acceptance. Independent Schrodinger source/test-source review active, Main running integration packet serially. No runtime actions. Accepted queued deliveries use temporary consumer receipts, not a source history map; empty delta does no eviction.
+
+## Mutation and cancellation refinement
+Source invalidation disabled in a controlled prior-snapshot mutation:2executed tests/10failures prove stale cached variants and accepted queued callback regressions; exact original bytes restored by finally/hash assertion. This is a targeted mutation, not claimed original-baseline execution. Then Main refined new API to retire ownership underlock and cancel tasks outside it, preventing synchronous cancellation-handler reentry deadlock. Added positive reentrant stats-handler test with failure-safe fake cleanup. No deadlocking mutant was run. Latest12newmethods provisionalGREEN (6pipeline+6integration); final frozen runner includes the latest helper closed-state addition. Original and r2review packets retained separately. Legacy unrelated weak-variable compiler warning remains; no global warning-clean claim.
+
+## Independent r1 / explicit old-completion ordering
+Schrodinger bounded production SOURCE PASS on r2inputpacket. Test-source P2: resuming old loader continuation plus0.1s inverted wait does not prove the old finish decision ran before replacement release/cache probe. This is an evidence gap, not a new production failure. Main will add an internal lock-protected processed-result count and positive acknowledgment in both tests after the current frozen runner finishes. Getter acquires the same finish lock, so observing the increment implies the ownership decision has completed that critical section; no arbitrary external callback or per-identity history. Existing root-search runtime-test limitation retained. Source edits will not overlap current frozen verification.
+
+## Positive ownership decision acknowledgment / discriminating RED
+Current pipeline adds one internal processed-result scalar under its existing finish lock; the read-only getter uses the same lock, so observing it proves the prior ownership decision completed before the test continues. Both non-cooperative old-load tests now require that signal before releasing replacement/probing cache. Counter has no identity/clock payload, public telemetry/API or policy role; per-result, not per-frame. Final12newtests firstGREEN. Removing only loadID comparison on this exact latest source executes1test/4assertion failures (0unexpected), demonstrating old success consumes still-pending replacement listeners/cache; precise original bytes restored/hash b119be23. Earlier invalidation-noop2test/10failure RED belongs to prior pre-liveness-refinement snapshot, not claimed as current baseline execution. Final-r2 frozen runner now live; r1 packet547inputs/focused105/full3348/Debug/Releasepackage/diff0 and da1a4e4d artifact retained historical/unlaunched. Final source/test review follow-up requested.
+
+## Independent r2 / final execution progress
+Schrodinger bounded source/test-source PASS, r1 P2 closed at exact restored source/test/spec hashes. Counter read establishes completed ownership critical section, not callback execution; isolated controlled completions make required counts unambiguous. Root-search/native/same-path/cancellation-scope limits retained. Reviewer now closed, worker previously closed, no active subagents. Final focused/full/Debug already exit0; Release/package/diff finishing. No physical or native acceptance inferred.
+
+## Final closeout
+Bounded source/test-source PASS r2, P2 ordering closed. Final frozen547 inputs: focused105/0/full3348/0/Debug/Releasepackage/diff passed. Final candidate SHA49d8989965316d71909f138127c9dd32cc3a077aeafec5d36da606ff87c2020d, unsigned/uninstalled/unlaunched. Old fd395b00 remains separately process-checked; no native action. All agents closed; all jobs terminal. No additional implementation required for this written source-URL contract; same-path/platform freshness and other architecture/full-parity gates remain open. Next executable work is a separately scoped remaining functional/reliability requirement, not user-deferred hitch tuning or repeated closed gates.

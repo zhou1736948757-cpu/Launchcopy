@@ -26,7 +26,7 @@ public enum LauncherActivationSource: Equatable, Sendable, CaseIterable {
     case statusItem
     case globalShortcut
     case hotCorner
-    /// 四指捏合（T-G-P4：只发 show，永不 hide/quit——PLAN §9 不变量 3）。
+    /// Four-finger gestures; outward Hide is separately opted in (2026-10-22).
     case fourFingerPinch
     case testHarness
 }
@@ -49,6 +49,7 @@ public enum DismissReason: Equatable, Sendable {
     case screenConfigurationChanged
     case sessionResigned
     case explicitQuit
+    case fourFingerOutward
 }
 
 /// 挂起原因（sleep / session inactive / 屏幕重配）。

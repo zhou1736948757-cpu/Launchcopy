@@ -303,7 +303,8 @@ final class PagingSeamTests: XCTestCase {
 
     // MARK: - nil provider → 中性占位（Phase 1A 回归模式）
 
-    func testNilProviderServesNeutralPlaceholder() {
+    @MainActor
+    func testNilProviderServesNeutralPlaceholder() async {
         let surface = makeSurface(pageCount: 5, itemsPerPage: 8) // nil provider
         XCTAssertEqual(surface.servedRevision, 0)
         XCTAssertNil(surface.pinnedPresentation)
@@ -311,6 +312,7 @@ final class PagingSeamTests: XCTestCase {
             let host = surface.hostForPage(index)
             XCTAssertEqual(host?.preparedItemsPerPage, 8, "中性占位 item 数 = itemsPerPage")
             XCTAssertEqual(host?.visibleItemCount, 8, "中性 tile 网格渲染（Phase 1A 行为）")
+            await drainDeferredPresentationTurns()
             XCTAssertEqual(host?.accessibilityLabel() as? String, "Page \(index + 1) of 5")
         }
         // refreshPresentation 在无 provider 时无操作。

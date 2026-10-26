@@ -309,6 +309,7 @@ final class KeyboardLaunchTests: XCTestCase {
         let committed = surface.core.committedPage
         let identity = try XCTUnwrap(keyboard.focusModel.current)
         // ① 可访问性焦点（页描述）与焦点 pageIndex 都指向 committed/displayed 页。
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(surface.accessibilityDescription, "Page \(committed + 1) of \(surface.core.pageCount)")
         XCTAssertEqual(identity.pageIndex, committed, "焦点 pageIndex 与 committed 页一致（可访问性一致）")
         // ② 视觉焦点 = committed 页首个有效 cell（确定性目标）。

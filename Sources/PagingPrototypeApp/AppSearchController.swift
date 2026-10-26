@@ -35,12 +35,17 @@ public final class AppSearchController: NSObject, NSSearchFieldDelegate {
     public var onSearchEntered: (() -> Void)?
     /// 搜索退出回调（装配层可接；中性）。
     public var onSearchExited: (() -> Void)?
+    public var gridInputIsAvailable: (() -> Bool)?
 
     /// T-1E-D：当前模式 first responder 提供者（T-1E-E 接线）。返回当前应成为 first responder
     /// 的 responder（标题编辑 → FolderTitleEditor；folder 打开 → KeyboardFocusController）；
     /// nil = 由本控制器按搜索/顶层规则决定。key-window 重建按模式优先级：标题编辑 > folder
     /// 打开 > 搜索 > 顶层（ADR-008 §3 Q10）。
     public var modeFirstResponderProvider: (() -> NSResponder?)?
+
+    /// Composition-root commit hook: stages dependent folder data before applying search.
+    /// Standalone search controllers continue to commit their own presentation directly.
+    public var pendingCommitter: ((Int) -> AppGridPresentationUpdate?)?
 
     private weak var keyboardController: KeyboardFocusController?
     private weak var surface: PagingSurface?
@@ -124,6 +129,7 @@ public final class AppSearchController: NSObject, NSSearchFieldDelegate {
     /// first responder → 去激活搜索 UI。调用方据此 CONSUME 空白点击且不终止应用。
     public func exitSearchAndRestoreFocus() {
         clearFieldText()
+        surface?.cancelDirectNavigation()
         presentation.clearQuery()
         commitIfIdle()
         guard let window = field.window else { return }
@@ -134,10 +140,33 @@ public final class AppSearchController: NSObject, NSSearchFieldDelegate {
         onSearchExited?()
     }
 
+    /// Restores an ephemeral Library return context through the existing query
+    /// transaction; no catalog revision is minted and no search history is saved.
+    func restoreAfterLibrary(query: String, focusSearch: Bool) {
+        field.stringValue = query
+        if let editor = field.currentEditor() { editor.string = query }
+        surface?.cancelDirectNavigation()
+        let requested = AppSearchQuery(raw: query)
+        let unchanged = requested.isEmpty
+            ? (presentation.currentQuery?.isEmpty ?? true)
+            : presentation.currentQuery == requested
+        // The grid remains retained under Library. Re-submitting the same query
+        // invalidates visible cells/icons at the exact return boundary for no gain.
+        if !unchanged {
+            if requested.isEmpty { presentation.clearQuery() }
+            else { presentation.updateQuery(requested) }
+        }
+        // Still admit a pending catalog/search transaction on the current query.
+        commitIfIdle()
+        isSearchActiveFlag = focusSearch
+        if focusSearch { field.window?.makeFirstResponder(field) }
+    }
+
     // MARK: - 实时输入 → 查询代
 
     public func controlTextDidChange(_ obj: Notification) {
         let raw = currentText
+        surface?.cancelDirectNavigation()
         presentation.updateQuery(AppSearchQuery(raw: raw))
         commitIfIdle()
     }
@@ -145,6 +174,9 @@ public final class AppSearchController: NSObject, NSSearchFieldDelegate {
     // MARK: - 命令处理（Return/Escape/Down/Tab）
 
     public func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        // The input method owns commands while composing. Do not clear its
+        // draft or resign the editor to navigate launcher results.
+        guard !textView.hasMarkedText() else { return false }
         switch commandSelector {
         case #selector(NSResponder.insertNewline(_:)):
             return handleReturnOrEnter()
@@ -169,6 +201,7 @@ public final class AppSearchController: NSObject, NSSearchFieldDelegate {
         } else {
             // 非空 query → 清空 query，恢复全 catalog，保持搜索框 first responder。
             clearFieldText()
+            surface?.cancelDirectNavigation()
             presentation.clearQuery()
             commitIfIdle()
         }
@@ -176,11 +209,15 @@ public final class AppSearchController: NSObject, NSSearchFieldDelegate {
     }
 
     private func handleReturnOrEnter() -> Bool {
-        transferFocusToFirstResult()
+        if gridInputIsAvailable?() == false { return true }
+        if surface?.isDirectNavigationActive == true { return true }
+        return transferFocusToFirstResult()
     }
 
     private func handleDown() -> Bool {
-        transferFocusToFirstResult()
+        if gridInputIsAvailable?() == false { return true }
+        if surface?.isDirectNavigationActive == true { return true }
+        return transferFocusToFirstResult()
     }
 
     /// 把焦点转移到当前已显示页第一个有效结果（首次不启动）。
@@ -197,6 +234,7 @@ public final class AppSearchController: NSObject, NSSearchFieldDelegate {
     }
 
     private func canTransferFocus() -> Bool {
+        guard gridInputIsAvailable?() != false else { return false }
         guard let surface, !surface.isTearingDown else { return false }
         // 无已提交结果 → 不转移。
         guard !presentation.provider.presentationRecords.isEmpty else { return false }
@@ -226,7 +264,9 @@ public final class AppSearchController: NSObject, NSSearchFieldDelegate {
     @discardableResult
     public func commitPendingAtIdleBoundary() -> AppGridPresentationUpdate? {
         guard let surface, !surface.isTearingDown else { return nil }
-        return presentation.applyPendingAtIdleBoundary(currentPage: surface.core.committedPage)
+        let page = surface.core.committedPage
+        if let pendingCommitter { return pendingCommitter(page) }
+        return presentation.applyPendingAtIdleBoundary(currentPage: page)
     }
 
     private func commitIfIdle() {
@@ -242,9 +282,12 @@ public final class AppSearchController: NSObject, NSSearchFieldDelegate {
         guard let window = field.window else { return }
         // T-1E-D：模式提供者优先（标题编辑 / folder 打开等非搜索模式）。
         if let responder = modeFirstResponderProvider?() {
-            if window.firstResponder !== responder {
-                window.makeFirstResponder(responder)
-            }
+            if window.firstResponder === responder { return }
+            // A control's native field editor already owns its input. Asking
+            // for the control again can resign it and commit a title draft.
+            if let editor = (responder as? NSControl)?.currentEditor(),
+               window.firstResponder === editor { return }
+            window.makeFirstResponder(responder)
             return
         }
         if isSearchActive {

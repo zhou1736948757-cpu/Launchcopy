@@ -1,0 +1,8 @@
+# Main-recorded independent integration review R1
+
+Reviewer:Descartes / 01a14e45-2e78-7022-87a1-a07830c4b452
+Verdict:scopedSOURCEFAIL2.
+
+P1: productionrunning-appcheckusesexactURL equality, canmisscasealias oncase-insensitivevolume; canonicalizing symlinksdoesnotguaranteecase normalization. Usefixednon-userlocale fullpathcase-insensitive runningrefusalonly; conservativeextra refusals oncase-sensitivevolumes acceptable. No change tocatalog/profile/fileidentity matching.
+
+P2: hide→show whileacceptedmovepending couldallowlateoldoutcome toshowfeedback/failurealertbecauseonlyroot/language/currentvisibilitychecked. Addhideinvalidatedremovalpresentationgeneration, butretainactualsuccessrefresh/outcome/Quitprotection. Heldfakecoverslate success/failure. Main actualreview-red-r1:3methods/5assertfails on2methods,0.610s; pureproductionmatcherextractionandactualRoot hidehandler/epochpredicatewithcontrolledreceipt, notrealAPFS/nativeUIproof. Originalstable10filehashesmatched. Reviewerreadonly/noexecution/nofilewrites. OtherreviewedtransactiondefaultCancel/singleoperation/receipt/launchsuppressionpaths nonewfinding. R2repairreviewrequestedseparately.

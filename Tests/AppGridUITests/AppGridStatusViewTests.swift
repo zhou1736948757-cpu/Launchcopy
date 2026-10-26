@@ -13,18 +13,22 @@ final class AppGridStatusViewTests: XCTestCase {
         return view
     }
 
-    func testInitialStateIsLoading() {
+    func testInitialStateIsLoading() async {
         let view = makeStatusView()
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(view.state, .loading)
         XCTAssertEqual(view.statusText, AppGridUIState.loading.accessibilityDescription)
         XCTAssertEqual(view.accessibilityLabel(), AppGridUIState.loading.accessibilityDescription)
     }
 
-    func testStateTransitionsUpdateTextAndAccessibility() {
+    func testStateTransitionsUpdateTextAndAccessibility() async {
         let view = makeStatusView()
+        await drainDeferredPresentationTurns()
         let cases: [AppGridUIState] = [.ready, .empty, .partialFailure, .refreshing, .loading]
         for state in cases {
             view.update(state: state)
+        await drainDeferredPresentationTurns()
+            await drainDeferredPresentationTurns()
             XCTAssertEqual(view.state, state)
             XCTAssertEqual(view.statusText, state.accessibilityDescription)
             XCTAssertEqual(view.accessibilityLabel(), state.accessibilityDescription,
@@ -32,27 +36,34 @@ final class AppGridStatusViewTests: XCTestCase {
         }
     }
 
-    func testBusyStatesShowSpinner() {
+    func testBusyStatesShowSpinner() async {
         let view = makeStatusView()
+        await drainDeferredPresentationTurns()
         // loading（初始）→ busy
         let spinner = view.subviews.compactMap { $0 as? NSProgressIndicator }.first
         XCTAssertNotNil(spinner)
         XCTAssertFalse(spinner?.isHidden ?? true, "loading 显示 spinner")
 
         view.update(state: .empty)
+        await drainDeferredPresentationTurns()
         XCTAssertTrue(spinner?.isHidden ?? false, "空目录不显示 spinner")
 
         view.update(state: .refreshing)
+        await drainDeferredPresentationTurns()
         XCTAssertFalse(spinner?.isHidden ?? true, "刷新中显示 spinner")
 
         view.update(state: .ready)
+        await drainDeferredPresentationTurns()
         XCTAssertTrue(spinner?.isHidden ?? false, "ready 不显示 spinner")
     }
 
-    func testNeutralTextContainsNoIdentity() {
+    func testNeutralTextContainsNoIdentity() async {
         let view = makeStatusView()
+        await drainDeferredPresentationTurns()
         for state in [AppGridUIState.loading, .empty, .partialFailure, .refreshing] {
             view.update(state: state)
+        await drainDeferredPresentationTurns()
+            await drainDeferredPresentationTurns()
             let text = view.statusText
             XCTAssertFalse(text.contains("fixture"), "状态文本不得含测试 app 名")
             XCTAssertFalse(text.contains("/Applications"), "状态文本不得含路径")

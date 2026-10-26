@@ -1,0 +1,51 @@
+# Empty Presentation: Immediate Host Retirement
+
+Date:2026-10-17
+Status:REPRODUCTION_PENDING
+
+## Reason and maintenance scope
+Previous goal turn PROGRESS: first-ESC owner/native defect closed,2818green,current6886candidate. Prior geometry/source audit explicitly identified zero-page host removal without the existing clearForReuse path. Missing weak-host sweep was repaired separately, but did not promise immediate zero-result cleanup. Test whether actual Surface->PageHost->renderer lifecycle leaves old binding/icon contents until a future render. This is a small existing resource/callback invalidation bug, not capacity implementation, a new performance architecture or permission to change frozen Core/physics/protocols.
+
+## Current authority and allowed scope
+Current approved parity scope retains module boundaries and valid input/frame behavior; no global file prohibition is inferred from closed historical phase task write scopes. If reproduced, Main may modify ONLY existing PagingSurface.relayoutPages zero-range cleanup to use existing PageHostView.clearForReuse after detach. No Core/parameters/frame source/public signatures/radii/cache/organization/preferences change; normal nonempty branch untouched. Main owns a new dedicated integration test. No speculative refactor or code before actualRED. Main+boundedreviewer at most2 after stable repair; tests/buildserialized.
+
+## Verification
+Real in-process AppKit Surface/AppGridRenderer/retainedhosts and generated content: zero count immediately invalidates host/page/cell and removes live renderer entries, restore reuses cleared pages; late controlled icon completion never updates retired cells; neutral-renderer compatibility. No OS event posting/real icons/catalog/persistence/network. Full/focusednonzero tests, Debug/Release/package/localization/sourcefreeze, independent review and exactcandidate nativeempty/restore smoke; internal lifetime proof remains unit/source evidence, not nativeRSS/performance. Preserve owncurrent6886 app until normal testhandover. No OSsettings/formaldata/referencecode/assets/sign/install/commit/reset/clean/delete/kill. Capacityquestionstillpending.
+
+## Reproduced, repaired and focused verified
+ActualRED3methods/74failedassertions: zero-page transition retained oldhost/pagebindings andlatecontrolledicon completion installedanimage into retiredcell; neutralgeneration/content also uninvalidated. Rawtotalincludesoneincorrectnewtestexpectation ofno neutral subviews. Repair ONLYzero-rangeblock: detachhost thenexistingclearForReuse (whichalsoinvalidateslanguage), preserving normalrange/Core/physics/publicprotocol/cachelimits. Focusedr1 23tests/1failure onlyneutralhiddenpage-label allocation expectation; correctedtesttoallowemptyhiddenlabel while requiringtilesgone, no productionchange. Alsohardenedzero-requesttestfallbacktoXCTfailratherthaninvalidexpectationcount. Finalfocusedr2 29/0(0.216s), includesactualneutralhandoff/backdrop classes ratherthannonexistentPageHostViewTestsname. New467freeze,465baselineinputsunchanged+1modifiedSurfacefile+1newtest. Full/build/package/independentreview/native next. No claim ofzero pendingnativework/globalmemory/performance improvement.
+
+## Empty-result retirement repair: full suite green, final gates running — 2026-10-17
+
+Previous/currentgoalturn PROGRESS. Prior audit's concretezero-pagecleanuphole reproducedactualRED3methods/74assertfailures (includesonebadnewneutralallocationexpectation): oldhost/page/cellbindings notinvalidated andcontrolledlateicon installedretiredcellimage. Narrowexistingzero-rangecleanup nowdetacheshost thenusesexistingclearForReuse; no Core/publicprotocol/physics/radii/cachepolicychange. Testcorrectedtoallowintendedemptyhiddenneutralpagelabel, productunchangedforthat. Finalfocused29/0(0.216s),full2821/0(63.720s),Debug0.30s passed; Release/package87072 verifiedlive, Hubbleboundedsource review pending.467freeze relative466=465unchanged+oneSurfacecleanup+onenewintegrationtest. Current6886app/PID63225 unchanged until normalownhandover.
+
+Fourcycles/fourpages(onegenerateditemeach), realhost/viewbinding/poolidentity andcontrolledlatecompletionproveboundedlifecycle, not full245slotworkload/RSS/performance/globalnativeworkcancellation. Oldfirst-ESCfix retained. Stage Workflow/stage-summaries/2026-10-17-empty-presentation-retirement.md; .build/verification/20261017/empty-presentation-retirement/ evidence. No capacityapproval/newcontrols/OS/formaldata/reference/sign/install/kill/commit actions. Finishsamejob/reviewerthenexactnativezero/restore; fullobjectiveACTIVE/incomplete.
+
+
+## Empty-result cleanup verified; latest isolated candidate running — 2026-10-17
+
+Concrete maintenance progress: zero-range Surface cleanup now detaches then calls existing host.clearForReuse, immediately revoking old host/page/cell bindings and preventing the reproduced late retired-cell icon write. One production hunk plus one new integration-test file; no normal-range/Core/physics/public-contract/cache-policy change. RED3/74 assertions includes one invalid neutral expectation; focused r1 23/1 corrected only that test; final focused29/0 (0.216s), full2821/0 (63.720s), Debug/actualRelease/package/290keys×3languages PASS. Hubble bounded independent SOURCE PASS, no executions/UI; closed. All467 inputs/executable/own layout+Library hashes verified after native;465 baseline unchanged+one modified+one added.
+
+Latest unsigned/uninstalled isolated candidate `.build/candidates/empty-presentation-retirement-rc-20261017-r1/LaunchcopyUITest.app`, SHA aac66f40f03422533372b9ccf31b421f7f15743d791204cbe3d613369905ff75, RUNNING PID71120. Own63225 normally Quit and exact absence checked before new launch. Native no-match→empty→clear→original grid observed; earlier combined open/ESC output truncation not relied on. Fresh glyphopen→page1/3 and oneESC→folderclosed/main retained independently observed. Ordinary non-topmost2000×1400px/noquery/folderclosed left for user. Wallpaper still loading/black, NOT_FIXED. No dense-load/RSS/physical-performance/IME/VoiceOver/120Hz PASS. Capacity answer still pending; no new controls. No OS/formaldata/reference/install/sign/kill/commit actions. All agents/build jobs terminal. Full goal ACTIVE/incomplete; concrete PROGRESS, no inherited blocked audit.
+
+Full results `Workflow/results/EMPTY_PRESENTATION_RETIREMENT_RESULTS.md`; final receipt `.build/verification/20261017/empty-presentation-retirement/native-handover-r1.json`. This dated checkpoint supersedes older not-launched/running-old/pending-review snapshots, which remain history. Next work requires a concrete approved maintenance issue or actual pending product answer, not repetition of closed checks.
+
+
+## Post-delivery continuation audit 1 — 2026-10-17
+
+Previous goal turn was concrete PROGRESS: repaired empty-result cleanup, completed verification and native handover. This continuation is NO_PROGRESS_EXTERNAL_INPUT_AUDIT_1, not a verified wait: own app is running, but no active build/test/reviewer handle is carried forward. Rechecked all467 source inputs, exact aac66f40 executable and own isolated layout/Library payloads; unchanged. Current process retained.
+
+Read current WallpaperBackdropProvider/View and proposed source-control protocol. The previously localized ImageIO source-open wait does not establish a new repairable cause from these sources; no speculative timeout/retry, decoder/helper/security change or repeated native launch. Existing proposed OS source-control experiment remains unapproved. Capacity specification still PROPOSED and no actual answer received; independent folder/scalar approvals do not authorize capacity/readability/anchor changes. Other reserved product branches and physical/hardware/IME/VoiceOver evidence remain unresolved. No new concrete authorized source defect identified in this bounded check.
+
+Full objective is not achieved. Keep ACTIVE on this first same-condition audit; do not inherit earlier blocked counts or call this a live-work wait. Next substantive action needs actual pending decision/external evidence or a newly established defect within approved scope. No source/test/build/UI/formaldata/OS/reference/install/sign/kill/commit action. Receipt `.build/verification/20261017/empty-presentation-retirement/post-retirement-external-input-audit-01.json`.
+
+## External-input audit 2 — 2026-10-17
+
+Previous turn NO_PROGRESS audit1, not a live-work wait. Rechecked467 inputs, candidate aac66f40 and own profile payloads; unchanged, own testapp retained. Both capacity and OS wallpaper protocols remain proposed; no actual human answer/external device or input evidence has arrived. No concrete newly established approved source defect and no live build/test/reviewer handle. Same blocker count2 after real maintenance progress, not inherited older audits. Full goal ACTIVE/incomplete; no tests/builds/UI/source changes or repeated question. Receipt `post-retirement-external-input-audit-02.json` in the stage evidence directory.
+
+## Goal BLOCKED after fresh three-turn external-input audit — 2026-10-17
+
+Goal tool confirmed BLOCKED for the unchanged full LaunchBetter-on-Launchcopy objective, not completion or a user-requested pause. The three consecutive audits follow real empty-presentation maintenance progress; no old blocked count reused. Latest467 source inputs, exact aac66f40 executable and own isolated profile payloads remain unchanged; own test instance PID71120 remains running, not a live build/test/reviewer wait. No actual new capacity decision, OS source-control approval, physical/hardware/IME/VoiceOver evidence or concrete safe unclosed source defect has appeared.
+
+Main-grid rows/columns/readability/anchor contract remains proposed pending the existing human question; wallpaper OS experiment separately unapproved, rootcause unresolved. No speculative work, duplicate question or repeated tests used to simulate progress. Resume on a real product answer, external evidence, or a new concrete authorized defect; begin a fresh blocked audit after resumption. Test app retained, no OS/formaldata/reference/install/sign/kill/commit actions. Receipt `.build/verification/20261017/empty-presentation-retirement/post-retirement-external-input-audit-03.json`.
+

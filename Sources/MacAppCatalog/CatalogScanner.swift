@@ -19,7 +19,7 @@ import AppCatalogCore
 /// 单个 bundle 的 metadata 读取结果（分类 + 可选标识）。
 internal enum BundleMetadataResult: Sendable {
     /// plist 合法；identifier 为 nil = 缺 CFBundleIdentifier（软失败，走 URL fallback 身份）。
-    case valid(identifier: String?, displayName: String?)
+    case valid(identifier: String?, displayName: String?, bundleMetadata: AppBundleMetadata = .init())
     /// `Contents/Info.plist` 存在但不可读/不可解析。
     case corrupted
     /// 无 `Contents/Info.plist`（不是有效 bundle）。
@@ -36,16 +36,30 @@ internal protocol BundleMetadataReading: Sendable {
 internal struct BundleMetadataReader: BundleMetadataReading {
     func readBundleMetadata(at url: URL, fileManager: FileManager) -> BundleMetadataResult {
         let infoPlist = url.appendingPathComponent("Contents/Info.plist")
-        guard fileManager.fileExists(atPath: infoPlist.path) else { return .missingInfoPlist }
-        guard let data = try? Data(contentsOf: infoPlist) else { return .corrupted }
-        guard let plist = (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) as? [String: Any] else {
-            return .corrupted
+        let plist: [String: Any]
+        if fileManager.fileExists(atPath: infoPlist.path) {
+            guard let data = try? Data(contentsOf: infoPlist),
+                  let dictionary = (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) as? [String: Any] else {
+                return .corrupted
+            }
+            plist = dictionary
+        } else {
+            // Foundation recognizes supported application layouts (including iOS
+            // wrappers) without loading an executable or rewriting the launch URL.
+            guard let dictionary = Bundle(url: url)?.infoDictionary,
+                  dictionary["CFBundlePackageType"] as? String == "APPL" else { return .missingInfoPlist }
+            plist = dictionary
         }
         // 空字符串 bundle ID 视同缺失（无法承担主身份）。
         let rawIdentifier = plist["CFBundleIdentifier"] as? String
         let identifier = (rawIdentifier?.isEmpty == false) ? rawIdentifier : nil
         let name = plist["CFBundleName"] as? String
-        return .valid(identifier: identifier, displayName: name)
+        let metadata = AppBundleMetadata(
+            declaredCategoryIdentifier: plist["LSApplicationCategoryType"] as? String,
+            version: plist["CFBundleShortVersionString"] as? String,
+            build: plist["CFBundleVersion"] as? String
+        )
+        return .valid(identifier: identifier, displayName: name, bundleMetadata: metadata)
     }
 }
 
@@ -143,6 +157,9 @@ public final class CatalogScanner: CatalogScanning, @unchecked Sendable {
             guard !task.isCancelled else { return }
             let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
             let isSymlink = values?.isSymbolicLink ?? false
+            // Apply the documented no-follow contract to EVERY directory entry,
+            // before resolving a target or deciding whether it is an app bundle.
+            if isSymlink && !configuration.followDirectorySymlinks { continue }
             // 注意：同时请求 isDirectoryKey + isSymbolicLinkKey 时，symlink 的 isDirectory 返回链接自身
             // 的类型（恒 false）；必须解析目标后再判定目录性，否则 symlink 目录会被静默跳过
             // （cycle 检测与目录遍历都会失效）。
@@ -155,9 +172,6 @@ public final class CatalogScanner: CatalogScanning, @unchecked Sendable {
 
             if isAppCandidate {
                 // `.app` 目录是遍历终点（stopAtAppBundle=true 时绝不进入 bundle 内部 → helper 不可见）。
-                if isSymlink && !configuration.followDirectorySymlinks {
-                    continue // 默认不跟随 symlink 的 bundle
-                }
                 // 顶层 `.app` 总是入册（§5.2 规则 4 的 fallback 身份也在此产生）。
                 processBundle(entry, root: root, rootPriority: rootPriority,
                               configuration: configuration, fileManager: fileManager,
@@ -219,7 +233,7 @@ public final class CatalogScanner: CatalogScanning, @unchecked Sendable {
             failureCounts[.invalidAppBundle, default: 0] += 1
         case .corrupted:
             failureCounts[.corruptedBundle, default: 0] += 1
-        case .valid(let identifier, let displayName):
+        case .valid(let identifier, let displayName, let bundleMetadata):
             if identifier == nil {
                 // 软失败：仍以 canonical URL fallback 身份入册（§5.2 规则 4），同时计数供 telemetry。
                 failureCounts[.missingBundleIdentifier, default: 0] += 1
@@ -229,7 +243,7 @@ public final class CatalogScanner: CatalogScanning, @unchecked Sendable {
                 ?? AppID.canonicalURLFallback(canonical)
             records.append(AppRecord(id: appID, displayName: name, bundleIdentifier: identifier,
                                      canonicalURL: canonical, iconIdentity: .from(appID: appID),
-                                     sourceRootPriority: rootPriority))
+                                     sourceRootPriority: rootPriority, bundleMetadata: bundleMetadata))
         }
     }
 

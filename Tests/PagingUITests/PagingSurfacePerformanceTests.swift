@@ -16,7 +16,8 @@ final class PagingSurfacePerformanceTests: XCTestCase {
     /// 单页 view 预算：ceil(livePageRadius + prewarmDistance) × 2 + 1 = 3×2+1 = 7。
     private var viewBudget: Int { 7 }
 
-    func testViewBudgetBoundedAcrossLongScroll() {
+    @MainActor
+    func testViewBudgetBoundedAcrossLongScroll() async {
         let surface = makeSurface(pageCount: 100)
         // 半径 3：center 0 → 范围 [0,3]（4 个 live），永不超预算。
         XCTAssertEqual(surface.liveHostCount, 4)
@@ -31,6 +32,7 @@ final class PagingSurfacePerformanceTests: XCTestCase {
             // 每个 live 页索引合法且内容正确。
             for index in 0..<100 where surface.hostForPage(index) != nil {
                 XCTAssertLessThan(index, surface.core.pageCount)
+                await drainDeferredPresentationTurns()
                 XCTAssertEqual(surface.hostForPage(index)?.accessibilityLabel() as? String,
                                "Page \(index + 1) of 100")
             }

@@ -1,0 +1,31 @@
+# Folder Material Controlled Native Matrix — 2026-10-16
+
+## Scope and authority
+Continue the approved material verification gate, not a new product feature or new shipping architecture. The accepted material spec requires controlled bright/dark/busy backgrounds and accessibility fallbacks. Previous turn actual native controls were PROGRESS; do not repeat those gates. Main creates a separate in-memory-only test application compiled against a verified byte-identical copy of AppGridUI and dependencies. Canonical code/package/tests/current user-facing candidate untouched. No reference-project resources, real catalog or wallpaper, formal data, OS appearance/accessibility changes, installs/signing, process termination or fullscreen/Space changes.
+
+## Verification harness contract
+One ordinary non-topmost window; exact production FolderOverlayView and adaptive policy, generated app identities/icons/labels. App-local controls switch per-window Aqua/Dark Aqua and own generated bright/dark/busy background, inject Reduce Transparency/Increase Contrast through existing public policy. Never change OS settings. No persistence/network/screen capture APIs; a normal own-app Quit action. Current launcher test remains running and not replaced. This is component-native controlled rendering, not production startup/window-routing or physical gesture/performance acceptance. No opening/exit motion or owner-theme-change proof is implied.
+
+## Plan / ownership
+Main owns isolated copied Package.swift/new probe entry and CUA operations/results; one serialized build. Bounded read-only review can run alongside compilation, total at most2. Copy463 current panel inputs verified; only copy adds a harness executable target. Construct/compile -> inspect controlled native matrix via CUA -> normal Quit probe and verify absence -> leave existing launcher test intact -> scalar-only receipts/project checkpoints. No captured personal wallpaper image saved. Compare component identities/source hashes to canonical snapshot.
+
+## Initial status
+Copied package and target prepared; harness code/build/native checks pending. Need actual native evidence before claiming material matrix observed. Whole migration goal remains incomplete; pending human/performance/product decisions unchanged.
+
+## New human priority / honest harness state
+User explicitly accepted currentglass appearance andrequested true source-origin motion. Main prioritized boundednewmotiondiscovery/spec. Isolatedharnessbuildr1failed becauseentryglobalconstructedMainActor delegateoutsideisolatedcontext andprivate-typeglobalneededprivatevisibility. Fixed ONLYcopiedentry byMainActor.assumeIsolated closure; r2buildpending. No canonicalchange/harnesslaunch/OSsetting/native matrixPASS. Matrixis supplementaryverification, not a blocker toconfirmingnewmotiondesign.
+
+## R2: current source-origin baseline, controlled native gate resumed
+
+The preceding goal turn made concrete native resize/editor progress. Desktop is accessible. Continue the approved but unexecuted material appearance/background/accessibility matrix rather than repeat already observed startup controls or infer physical gesture PASS. New copied package: `.build/experiments/folder-material-native-matrix-20261016-r2/Package`; 464 authoritative source-origin-r3 inputs copied with hashes verified. Only copied Package.swift adds one probe executable; copied generated-fixture entry is byte-identical to the previous compiled-only harness. All production inputs otherwise match current canonical sources, not the old material-only baseline. No canonical source changes.
+
+Main owns serialized build, unsigned isolated probe packaging and CUA observations/normal Quit. One independent reviewer owns only `Workflow/results/FOLDER_MATERIAL_NATIVE_MATRIX_R2_SOURCE_REVIEW.md` and reads bounded harness/snapshot/material policy; no builds/tests/UI. Main + reviewer = two agents (below max three). Native matrix is component-only: per-window Aqua/Dark Aqua, generated bright/dark/busy colors, injected independent Reduce Transparency/Increase Contrast policy. No OS appearance/accessibility preference or formal data change; no screen capture API/image file, real catalog, wallpaper access or reference resources in probe. Main retains current launcher app and uses a separate ordinary window. No opening motion/owner theme routing or matched performance assertion from this probe.
+
+One preliminary read attempt used an incorrect skill path and failed before making any changes; corrected path was read. Build/native results pending.
+
+## Controlled native material check completed (bounded) — 2026-10-16
+
+New current-baseline generated-fixture probe compiled (Debug13.30s) and actually observed through CUA: six glass states (Aqua/Dark Aqua × Bright/Dark/Busy) plus six independent RT/contrast fallback states on Busy, then glass restoration. Rounded panel diffuses busy details while icons/labels stay sharp; RT or contrast yields semantic opaque panel; contrast strengthens border. This is 12 distinct component-native cases, not all24 combinations, OS notification wiring, opening motion or matched performance. Probe-only control strip has poor contrast on opposite-luminance fixtures; do not mislabel it as product chrome. Hume independent source-only admissible/no blocking finding, zero executions/UI, closed. No product code/test/resource changes.
+
+Probe86591 normally quit via own control; exact process absent, closed binding not queried. Current launcher bdb9a6e3/PID82034 retained, freshAX folderOPEN/15members/page1of3/originaltitle/wallpaperready. All464 canonical inputs/candidate/profile hashes unchanged; no system settings/formaldata/install/sign/kill/commit/reference access or saved personal screenshot. Previous/current goal turns PROGRESS (native resize/editor, then controlled material evidence), not a verified job wait or blocked impasse. Report Workflow/results/FOLDER_MATERIAL_NATIVE_MATRIX_R2_RESULTS.md; structured .build/verification/20261016/folder-material-native-matrix-r2/native-results.json. Remaining human actual source-origin/flash/physical gestures and reserved product/hardware/OS gates unchanged; whole goal NOT complete. Do not repeat these closed12cases to stay active.
+

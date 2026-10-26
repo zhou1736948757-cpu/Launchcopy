@@ -6,10 +6,15 @@ import PackageDescription
 
 let package = Package(
     name: "PagingPrototype",
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v14)
     ],
     targets: [
+        .target(name: "LauncherLocalization", resources: [.process("Resources")]),
+        .executableTarget(name: "LocalizationResourceProbe", dependencies: ["LauncherLocalization"]),
+        .testTarget(name: "LauncherLocalizationTests", dependencies: ["LauncherLocalization"]),
+
         // 纯逻辑分页状态机：不依赖 AppKit / Core Animation / 窗口 / 真实触控板事件
         .target(name: "PagingCore"),
 
@@ -19,13 +24,13 @@ let package = Package(
         // AppKit 视图、页面承载、输入处理、settle 动画与中断
         .target(
             name: "PagingUI",
-            dependencies: ["PagingCore"]
+            dependencies: ["PagingCore", "LauncherLocalization"]
         ),
 
         // App 入口：窗口、命令行参数、退出/重开/resize
         .executableTarget(
             name: "PagingPrototypeApp",
-            dependencies: ["PagingCore", "PagingTelemetry", "PagingUI", "AppCatalogCore", "MacAppCatalog", "AppIconPipeline", "AppGridUI"]
+            dependencies: ["PagingCore", "PagingTelemetry", "PagingUI", "AppCatalogCore", "MacAppCatalog", "AppIconPipeline", "AppGridUI", "LauncherLocalization"]
         ),
 
         // Phase 1B：纯 Foundation domain：稳定身份、快照、diff、排序去重 policy、分页计划、锚点重映射、fixtures
@@ -46,7 +51,7 @@ let package = Package(
         // Phase 1B：真实内容网格 UI（只依赖领域/管道/承载 seam；不依赖 MacAppCatalog，装配层注入）
         .target(
             name: "AppGridUI",
-            dependencies: ["AppCatalogCore", "AppIconPipeline", "PagingUI"]
+            dependencies: ["AppCatalogCore", "AppIconPipeline", "PagingUI", "LauncherLocalization"]
         ),
 
         .testTarget(

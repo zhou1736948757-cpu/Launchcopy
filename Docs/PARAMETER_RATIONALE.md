@@ -81,3 +81,6 @@
 | 2026-08-30 | Phase 1D 搜索：无新增平台/性能参数（搜索为纯内存过滤,不引入 debounce 计时器参数;query 归一化用系统 Locale,无硬编码阈值）;基线 526→620 tests | Main（T-1D-A..E） |
 | 2026-08-30 | Phase 1E 文件夹：无新增平台/性能参数（folder-lab groupSize 35 为测试入口配置非产品参数；Reduce Motion 参数 0/1/0 与 standard 0.18/0.96/8 入 ADR-008 §5）；基线 631→756 tests | Main（T-1E-A..E） |
 | 2026-09-10 | Phase 1G T-1G-D：追加 §5 Hot Corner/shortcut 参数（poll/zone/dwell/hysteresis/cooldown/debounce + presentation durations）；ADR-012 Q2/Q3 ACCEPTED | Worker（T-1G-D） |
+
+## 2026-10-16 — Approved glyph-origin folder motion (supersedes fixed center nudge)
+User approved Docs/FOLDER_SOURCE_ORIGIN_MOTION_SPEC.md. Pointer entrance240ms, exit200ms, ease-out, no bounce; Reduce Motion retains180ms opacity-only/identity. Source center and uniform initial fit derive from the current visible folder glyph and actual panel/layer anchor; fixed0.96scale/8pt nudge is no longer the active pointer design. Background/modalroot remain fixed. No PagingCore thresholds/damping/Timer0ms/frameSource/pagecapacity changes. Newpointeradmission rejects moving-memberpress until settlement, retaining ESC/outsideclose andkeyboard. Geometry/owner tests establish implementation, not native fluidity/flash/physical acceptance. Historical0.18/0.96/8 records above remain historical.

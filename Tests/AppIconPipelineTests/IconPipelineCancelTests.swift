@@ -22,6 +22,9 @@ final class IconPipelineCancelTests: XCTestCase {
         XCTAssertEqual(pipeline.stats.cancellations, 1, "double cancel is idempotent")
         XCTAssertEqual(pipeline.stats.requests, 1)
 
+        // Cancellation before permit admission need not invoke the loader.
+        let oldLoads = loader.loadCount
+        XCTAssertLessThanOrEqual(oldLoads, 1)
         // 取消后重请求 → 全新加载（旧 in-flight 已拆除）
         let e = expectation(description: "reload delivered")
         pipeline.request(key: makeKey(1), generation: 2) { _, _, result in
@@ -29,7 +32,7 @@ final class IconPipelineCancelTests: XCTestCase {
             e.fulfill()
         }
         wait(for: [e], timeout: 3)
-        XCTAssertEqual(loader.loadCount, 2)
+        XCTAssertEqual(loader.loadCount, oldLoads + 1)
 
         pipeline.shutdown()
     }
@@ -77,7 +80,8 @@ final class IconPipelineCancelTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.6))
         XCTAssertEqual(callbacks.count, 0, "cancelAll → zero callbacks")
         XCTAssertEqual(pipeline.stats.cancellations, 2)
-        XCTAssertEqual(loader.loadCount, 1, "load started then cancelled mid-flight")
+        let oldLoads = loader.loadCount
+        XCTAssertLessThanOrEqual(oldLoads, 1, "Cancellation before admission may avoid the load entirely")
 
         let e = expectation(description: "fresh reload")
         pipeline.request(key: makeKey(1), generation: 3) { _, _, result in
@@ -85,7 +89,7 @@ final class IconPipelineCancelTests: XCTestCase {
             e.fulfill()
         }
         wait(for: [e], timeout: 3)
-        XCTAssertEqual(loader.loadCount, 2, "fresh load after cancelAll")
+        XCTAssertEqual(loader.loadCount, oldLoads + 1, "fresh load after cancelAll")
 
         pipeline.shutdown()
     }

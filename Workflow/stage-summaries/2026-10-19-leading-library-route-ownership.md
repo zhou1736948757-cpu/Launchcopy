@@ -1,0 +1,25 @@
+# Leading Library route ownership regression follow-up
+
+Date:2026-10-19. Previous goal turn PROGRESS (implemented/verified packaged leading pane); full objective ACTIVE/incomplete. Native desktop freshly rechecked LOCKED once; no repeated unlock request or alternate input path. Own old52219 was not quit. Current902e83b5 source inspected; Main found cached grid/native routes surviving button/hide semantic changes and grid direct-forward bypassing native Window readability gate. These are source counterexamples to the already-approved single-owner/protected-input contract, not new feature scope.
+
+Main owns navigator/native bridge repair and docs. Bounded worker owns only new value-input regression tests; no NSEvent creation or UI. First RED expected outcomes, then fix and focused/full/build/package with new frozen manifest. Preserve prior candidate and formal data. No source-acceptance or native PASS before evidence.
+
+## RED / first GREEN / independent finding
+Worker Avicenna delivered8 value-only tests and closed. Main RED-r1 executed8tests with38failedassertions across5cases (not compile failure), then repaired semantic owner-change drain, ordinary original-event pass-through and revoked-grid admission. Focused green-r1:110/0.525inputs frozen (1newtestfile/2productionfiles modified vs524baseline); full/build/package serial verification live, no source edits while frozen job runs.
+
+Independent Parfit found a further P2: prior unreadable-stream suppression in Window survives a new zero-delta began because parent hold consumes it before the Window sees that fresh boundary. Its deferred begin later bypasses the Window via super, so changed/tails are wrongly suppressed. SOURCE ACCEPT withheld. Proposed bounded repair retains late Window unreadability guard, factors the old flag into a value gate and observes eligible fresh sequence boundaries before parent arbitration; joint gate+navigator tests must reproduce the exact production order. No native input claim. Complete current frozen run before further writes; its green tests/package would NOT close this known source finding.
+
+## Joint Window-gate regression and repair
+525input run naturally completed:full3206/0,Debug/Release/package/diff green; intermediate r2 candidate retained but explicitly superseded by known P2, not SOURCE ACCEPT/native accepted. No build was restarted on an observation timeout and no source changed while frozen run was live.
+
+Main factored unchanged Window suppression into MainGridScrollSequenceGate and wired an early boundary observer (after folder routing, before leading navigator), keeping late Window suppression after Library native branch. Joint Window-order value harness7tests first ran with a no-op observer to preserve failing baseline:RED7tests/9assertfailures across2cases. Main then repaired only the observer to clear suppression iff available and genuinely fresh. Old changes/ends/momentum do not reset; consumed hold/parent/drain bypass late grid gating; Library native branch bypasses late grid gating. Focusedgreen-r2 and Parfit final re-review pending. Actual cached NSEvent dispatch count remains a native gate, not proved by value tests.
+
+## Final review / current frozen verification
+Parfit re-reviewed actual Window order, helper and joint tests: bounded SOURCE ACCEPT, P2 closed, no new confirmed P1/P2. Final focusedgreen-r2:117/0.527inputs frozen (relative525:2added helper/test files,1modified AppDelegate). All agents closed. Final full-r2/Debug/Release/package-r2/diff serial job live with before/after hash guards, targeting fresh leading-library-rc-20261019-r3. No source writes after freeze.
+
+Native lock remained the same at one fresh CUA check this continuation (no repeated question/UI workaround). This turn is PROGRESS from reproduced and repaired input-contract defects; full objective remains ACTIVE/incomplete, current native/physical gates unproved. Previous turn also made concrete source/package progress; do not replace missing native acceptance with tests.
+
+## Final delivery / native gate retained
+Final527input manifest matches; focused117/0/full3213/0,Debug/Release/package/diff all passed;365keys×3languages. Fresh leading-library-rc-20261019-r3 candidate SHA9a438f149b44ef6ba4e42cc413e1eec35feef40a7dab61d645c84e62b8724219. Newprofile seededONLY249verified authoredfixtures; nooldprefs/history/cache/locks. Native post-package preflight stillLOCKED; exact52219/3fconfirmedrunning, notquit. NewcandidateNOTlaunched/installed. Source review boundedACCEPT, allagentsclosed. No commit/sign/processsignals/OSchanges.
+
+FullobjectiveACTIVE/incomplete. Previous and current goalturns made realprogress; lockcondition persisted across both. With knownsourcefindings closed and no additional concrete approved source defect established, next action is manualunlock/currentnativepacket rather than speculative scope or repeated old audits. Revalidate externalstate once on nextcontinuation; apply the actual goal blocked-audit threshold only if sameimpasse persists, without inheriting older resolved lock cycles.

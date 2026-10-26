@@ -38,12 +38,11 @@ public struct AppID: Hashable, Sendable {
 // MARK: - 消失锚点的后继/前驱搜索用全序（§6.3 规则 2/3 的确定性实现）
 
 extension AppID {
-    /// 全序（仅模块内、仅用于锚点已消失时的后继/前驱搜索；与展示排序无关）：
-    /// bundleID 键 < canonicalURL fallback 键；同类按字符串升序。
-    /// 说明：锚点 AppID 不透明（不携带 displayName），无法在展示排序中定位其“应处位置”，
-    /// 故以身份键全序近似“稳定排序中的后继/前驱”。UI 正常路径锚点仍存在（走 .located），
-    /// 本全序只服务锚点消失的降级路径；确定性由字符串全序保证（规则 6：绝不沿用旧数组 index）。
-    fileprivate func anchorOrderLessThan(_ other: AppID) -> Bool {
+    /// Stable identity order shared by missing-anchor remappers across targets.
+    /// Bundle IDs precede canonical-URL fallback IDs; values compare lexically
+    /// within their variant. This is not a display or durable-workspace sort.
+    /// The predicate exposes no raw identity storage.
+    public func anchorOrderLessThan(_ other: AppID) -> Bool {
         switch (storage, other.storage) {
         case (.bundleIdentifier(let a), .bundleIdentifier(let b)): return a < b
         case (.bundleIdentifier, .canonicalURLFallback): return true
@@ -70,15 +69,18 @@ public struct AppRecord: Hashable, Sendable {
     public let canonicalURL: URL                  // 规范化后（同一 canonical URL = 同一对象）
     public let iconIdentity: IconIdentity
     public let sourceRootPriority: Int            // 0 = 最高优先级 root（去重用）
+    public let bundleMetadata: AppBundleMetadata
 
     public init(id: AppID, displayName: String, bundleIdentifier: String?,
-                canonicalURL: URL, iconIdentity: IconIdentity, sourceRootPriority: Int) {
+                canonicalURL: URL, iconIdentity: IconIdentity, sourceRootPriority: Int,
+                bundleMetadata: AppBundleMetadata = .init()) {
         self.id = id
         self.displayName = displayName
         self.bundleIdentifier = bundleIdentifier
         self.canonicalURL = canonicalURL
         self.iconIdentity = iconIdentity
         self.sourceRootPriority = sourceRootPriority
+        self.bundleMetadata = bundleMetadata
     }
 }
 

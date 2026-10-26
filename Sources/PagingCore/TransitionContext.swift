@@ -32,6 +32,8 @@ public enum SettleReason: String, Sendable, Equatable {
     case pageCountChange
     /// Reduce Motion 动态切换后重启（D8）。
     case reduceMotionChange
+    /// Explicit pointer-selected page; not a synthetic physical gesture.
+    case directNavigation
 }
 
 /// 一次 settle 的过渡上下文。
@@ -45,6 +47,8 @@ public final class TransitionContext {
     public let fromOffset: Double
     /// 发起原因。
     public let reason: SettleReason
+    /// Ownership survives environment restarts whose reason differs from the original request.
+    public let isDirectNavigation: Bool
     /// 创建时间戳。语义：手势发起的 settle = 手势事件时间戳（事件时基）；
     /// 非手势重启（resize/pageCount/RM 路径）= 壁钟时间 Date().timeIntervalSince1970
     /// （诊断字段，仅作关联用，两种时基不混算）。
@@ -54,11 +58,13 @@ public final class TransitionContext {
     /// 是否已 commit（单次提交保证）。
     public private(set) var hasCommitted: Bool
 
-    init(token: UInt64, targetPage: Int, fromOffset: Double, reason: SettleReason, createdAt: TimeInterval) {
+    init(token: UInt64, targetPage: Int, fromOffset: Double, reason: SettleReason, createdAt: TimeInterval,
+         isDirectNavigation: Bool = false) {
         self.token = token
         self.targetPage = targetPage
         self.fromOffset = fromOffset
         self.reason = reason
+        self.isDirectNavigation = isDirectNavigation
         self.createdAt = createdAt
         self.commitState = .pending
         self.hasCommitted = false

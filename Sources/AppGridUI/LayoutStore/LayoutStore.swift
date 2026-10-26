@@ -104,7 +104,10 @@ public protocol LayoutStore: Sendable {
     /// 有界 flush barrier：等待在途持久化完成（带超时），随后同步落盘 pending 写。幂等。
     func flush() async -> LayoutStoreFlushResult
 
-    /// reset：归档全部 store 文件（中性命名，证据保留）→ 清状态 → 立即持久化默认布局。
+    /// Archive journal evidence and persist the default after earlier owned I/O finishes.
+    /// Concurrent resets execute in actor admission order. Reset supersedes earlier
+    /// pending intentions; enqueues admitted afterward coalesce as successors and
+    /// drain after the last reset. A timed-out flush does not cancel this ownership.
     func reset(defaultLayout: PersistentWorkspaceLayout) async -> LayoutStoreResetResult
 
     /// 当前持久化状态。

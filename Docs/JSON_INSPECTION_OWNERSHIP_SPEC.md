@@ -1,0 +1,19 @@
+# Shared lexical JSON inspection ownership
+
+Date: 2026-10-20. Status: implementation contract for the approved whole-code maintainability follow-up (services audit P3).
+
+## Problem and outcome
+Library and optional launch-activity persistence already share two stateless lexical admission primitives, but Activity calls them through the unrelated concrete Library actor. Place these same-contract functions in a small internal Foundation-only namespace so future changes have explicit shared ownership. This is a mechanical extraction, not a parser or store redesign; no behavior improvement or security fix is claimed.
+
+## Scope and contract
+Create Sources/PagingPrototypeApp/JSONLexicalInspection.swift with internal enum JSONLexicalInspection containing the exact two existing static functions hasDuplicateObjectKeys and rootVersionTokens, including their bodies/comments. Remove those methods from AppLibraryFileStore and qualify its two calls; replace Activity's two concrete-helper calls. No public API, target, dependency, package manifest or compatibility forwarding facade. Current production/test references confirm no other caller. This helper is preliminary inspection only, not a complete JSON validator; both consumers must retain their subsequent Foundation shape/domain validation.
+
+Preserve exact UTF-8 byte scanning, decoded escaped-key equivalence, container tracking, root depth and token extraction, including malformed-input early return behavior. Do not combine their loops, change allocation/performance strategy or normalize numeric tokens. Each feature retains its own byte limits, supported versions, future/ambiguous/corrupt classifications, strict body shape, clock policy, recovery/save results and actor/I/O owner. Shared file-I/O protocol is intentionally unchanged. No version/schema, durable bytes, defaults, data collection, UI, layout or paging change.
+
+## Acceptance and verification
+Prove extracted block byte identity with original Library block and exact inverse reconstruction of both consumer files after only four call-site changes/removal. Add bounded synthetic-data public-store decode regression corpus that also compiles against the baseline stores: escaped/duplicate root and nested keys, header-like strings, arrays, numeric future/ambiguous tokens, missing/invalid headers, UTF-8 and malformed data, distinct valid Library and Activity envelopes. Hardcode expected feature results independently; no helper-generated oracle. Existing tests retain explicit-recovery protected-byte, no-follow, bounded-I/O and save behavior coverage. Do not add compatibility methods just for tests.
+
+Run the same new corpus on original and extracted consumers (both expected GREEN), preserving exact current source in finally. Then final focused nonzero Library/Activity/new tests, full XCTest, Debug/Release unsigned isolated packaging/localization/diff on frozen input hashes; independent bounded source/test review. No runtime/UI/performance or exhaustive parser-safety certification inferred. Existing tests may operate only owned temporary fixtures; new corpus is in-memory.
+
+## Ownership and boundaries
+Main owns three production paths, extraction/equivalence proofs, serial executions and documentation. One worker owns only Tests/PagingUITests/JSONAdmissionParityTests.swift (new); subsequent independent reviewer owns one report. At most three agents including Main, no overlapping writes/concurrent SwiftPM. Preserve all dirty work and earlier repairs. No prohibited reference/formal-data/OS/UI/process signal/sign/install/publish/commit/reset/clean actions. Current fd395b00 test runtime stays untouched; newest23a22eca candidate stays unlaunched. First Library hitch is user-deferred/non-blocking with CPU causality unproven; do not resume profiling. Whole parity remains active/incomplete; previous turn was concrete mixed-anchor repair progress.

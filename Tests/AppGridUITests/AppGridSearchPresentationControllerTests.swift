@@ -151,9 +151,10 @@ final class AppGridSearchPresentationControllerTests: XCTestCase {
 
     // MARK: - 无结果中性态渲染（AppGridStatusView）
 
-    func testNoResultsStatusViewRendersNeutralText() {
+    func testNoResultsStatusViewRendersNeutralText() async {
         let view = AppGridStatusView(frame: NSRect(x: 0, y: 0, width: 400, height: 120))
         view.update(state: .noResults)
+        await drainDeferredPresentationTurns()
 
         XCTAssertEqual(view.state, .noResults)
         XCTAssertEqual(view.statusText, AppGridUIState.noResults.accessibilityDescription)

@@ -123,6 +123,7 @@ private var inFlightCallbacks = 0
 /// 非捕获 C 回调（文件级；@convention(c) 闭包不可捕获上下文）。
 /// 对齐 LaunchBetter：锁内取活跃 backend 快照，锁外 ingest；device 仅作合成器设备键，可回退。
 private let contactFrameCallback: MTContactFrameCallback = { device, touchesPtr, count, timestamp, frame in
+    let receivedAt = ProcessInfo.processInfo.systemUptime
     registryLock.lock()
     inFlightCallbacks += 1
     let backend = activeBackend
@@ -135,7 +136,7 @@ private let contactFrameCallback: MTContactFrameCallback = { device, touchesPtr,
         return 0
     }
     backend.ingestRawFrame(deviceKey: device, touchesPtr: touchesPtr, count: count,
-                           timestamp: timestamp, frame: frame)
+                           timestamp: timestamp, frame: frame, receivedAt: receivedAt)
     registryLock.lock()
     inFlightCallbacks -= 1
     registryLock.unlock()
@@ -312,7 +313,8 @@ public enum MTTouchState {
 /// （began → moved* → ended；零触点/全部离面 = 结束证据）。
 /// 相位判定基于**帧间触点 identifier 集合 diff**（R-02 定案：state 为位掩码，
 /// 不再按枚举值判 began/ended/cancelled；触点消失即 ended，无 cancelled 概念）。
-/// 时间换算：首帧锚定 systemUptime，后续帧按回调时间戳相对增量换算（禁墙钟）。
+/// Map callback deltas to system uptime, bounded by callback receipt time.
+/// Consumer delivery never refreshes timestamps, so queued input still expires.
 public struct MultitouchFrameSynthesizer: Sendable {
     public struct DeviceState: Sendable {
         public var sessionOpen = false
@@ -320,6 +322,8 @@ public struct MultitouchFrameSynthesizer: Sendable {
         public var nextContactID = 1
         public var anchorUptime: TimeInterval?
         public var anchorCallbackTime: Double?
+        /// Preserve raw ordering faults even when receipt-time bounding hides a delta.
+        public var lastCallbackTimestamp: Double?
         /// 上一帧的原始 identifier 集合（帧间 diff 判定 began/ended 用）。
         public var lastContactIdentifiers: Set<Int32> = []
 
@@ -342,15 +346,7 @@ public struct MultitouchFrameSynthesizer: Sendable {
         var state = devices[deviceID] ?? DeviceState()
         defer { devices[deviceID] = state }
 
-        // 单调时间域：锚定首帧（systemUptime 域；禁墙钟 Date() 差值）
-        let timestamp: TimeInterval
-        if let anchorUptime = state.anchorUptime, let anchorCallbackTime = state.anchorCallbackTime {
-            timestamp = anchorUptime + (callbackTimestamp - anchorCallbackTime)
-        } else {
-            state.anchorUptime = uptimeNow
-            state.anchorCallbackTime = callbackTimestamp
-            timestamp = uptimeNow
-        }
+        let timestamp = Self.normalizedTimestamp(callbackTimestamp, receivedAt: uptimeNow, state: &state)
 
         // 活跃触点 = state != 0（R-02 位掩码：任何非零都算接触中）
         let active = touches.filter { $0.state != MTTouchState.notTouching }
@@ -359,9 +355,14 @@ public struct MultitouchFrameSynthesizer: Sendable {
         // 结束证据：零触点 / 全部离面 = 会话关闭（重新武装条件；触点从帧消失 = ended）
         if touches.isEmpty || active.isEmpty {
             guard state.sessionOpen else { return [] }
-            state.sessionOpen = false
-            state.contactIDs.removeAll()
-            state.lastContactIdentifiers.removeAll()
+            // An invalid terminal is not release evidence. Keep the source
+            // session open so the next valid empty frame can reach the consumer
+            // and clear its quarantine, rather than swallowing another gesture.
+            if timestamp.isFinite {
+                state.sessionOpen = false
+                state.contactIDs.removeAll()
+                state.lastContactIdentifiers.removeAll()
+            }
             return [PinchFrame(deviceID: deviceID, timestamp: timestamp, phase: .ended, contacts: [])]
         }
 
@@ -404,6 +405,32 @@ public struct MultitouchFrameSynthesizer: Sendable {
         state.lastContactIdentifiers = activeIdentifiers
         return [PinchFrame(deviceID: deviceID, timestamp: timestamp, phase: .moved,
                            contacts: Self.mapContacts(active, state: &state))]
+    }
+
+    /// The first callback's receipt latency can bias anchor-plus-delta into the
+    /// future. Cap at *ingress*, not main-queue delivery; leave older mapped
+    /// times unchanged. Do not reanchor: that could renew stale source samples.
+    /// With ordered source and receipt clocks, the minimum remains ordered.
+    /// Invalid raw order must remain invalid even if the cap would conceal it.
+    private static func normalizedTimestamp(_ sourceTime: Double, receivedAt uptime: TimeInterval,
+                                            state: inout DeviceState) -> TimeInterval {
+        guard sourceTime.isFinite, uptime.isFinite, uptime >= 0,
+              state.lastCallbackTimestamp.map({ sourceTime >= $0 }) ?? true else {
+            return .nan // Existing consumer validation quarantines until valid release.
+        }
+        let mapped: TimeInterval
+        if let anchorUptime = state.anchorUptime, let anchorCallbackTime = state.anchorCallbackTime {
+            mapped = anchorUptime + (sourceTime - anchorCallbackTime)
+        } else {
+            mapped = uptime
+        }
+        guard mapped.isFinite, mapped >= 0 else { return .nan }
+        if state.anchorUptime == nil {
+            state.anchorUptime = uptime
+            state.anchorCallbackTime = sourceTime
+        }
+        state.lastCallbackTimestamp = sourceTime
+        return min(mapped, uptime)
     }
 
     /// 触点身份映射（每设备；会话内稳定，会话间全新；不透明 token）——原 L344-357 逻辑保持不变。
@@ -760,7 +787,8 @@ public final class MultitouchSupportBackend: TouchProvider {
 
     /// C 回调入口：最小拷贝 MTTouch → RawTouch（回调内不做分析）。
     fileprivate func ingestRawFrame(deviceKey: MTDeviceRef, touchesPtr: UnsafeMutableRawPointer,
-                                    count: Int32, timestamp: Double, frame: Int32) {
+                                    count: Int32, timestamp: Double, frame: Int32,
+                                    receivedAt: TimeInterval) {
         let n = Int(count)
         var rawTouches: [RawTouch] = []
         if n > 0 {
@@ -772,13 +800,23 @@ public final class MultitouchSupportBackend: TouchProvider {
                                            x: t.normalized.position.x, y: t.normalized.position.y))
             }
         }
-        ingestRawTouches(deviceKey: deviceKey, timestamp: timestamp, frame: frame, touches: rawTouches)
+        ingestRawTouches(deviceKey: deviceKey, timestamp: timestamp, frame: frame,
+                         touches: rawTouches, receivedAt: receivedAt)
     }
 
     /// 原始触点帧注入（合成 + 有界入队；onFrame 锁外派发）。
     /// 测试可直接调用（fake 帧源）。
     public func ingestRawTouches(deviceKey: MTDeviceRef, timestamp: Double, frame: Int32,
                                  touches: [RawTouch]) {
+        let receivedAt = ProcessInfo.processInfo.systemUptime
+        ingestRawTouches(deviceKey: deviceKey, timestamp: timestamp, frame: frame,
+                         touches: touches, receivedAt: receivedAt)
+    }
+
+    /// Internal seam also used by the C callback: receipt precedes every copy,
+    /// registry/backend lock and queue wait. Never resample it during delivery.
+    func ingestRawTouches(deviceKey: MTDeviceRef, timestamp: Double, frame: Int32,
+                          touches: [RawTouch], receivedAt: TimeInterval) {
         var frames: [PinchFrame] = []
         lock.lock()
         rawCallbackCountStorage += 1
@@ -800,9 +838,8 @@ public final class MultitouchSupportBackend: TouchProvider {
             lock.unlock()
             return
         }
-        let uptimeNow = ProcessInfo.processInfo.systemUptime
         frames = synthesizer.synthesize(deviceID: deviceID, callbackTimestamp: timestamp,
-                                        touches: touches, uptimeNow: uptimeNow)
+                                        touches: touches, uptimeNow: receivedAt)
         if frames.isEmpty {
             rejectedFrameCountStorage += 1
         }

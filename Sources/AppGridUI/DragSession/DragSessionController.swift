@@ -13,6 +13,12 @@
 
 import Foundation
 
+/// Synchronous, side-effect-free presentation policy. Only a validated creation consumes it.
+public typealias FolderCreationTitleProvider = (
+    _ target: PersistentAppReference, _ source: PersistentAppReference,
+    _ layout: PersistentWorkspaceLayout
+) -> String?
+
 /// 可注入时钟（测试用假时钟控制 dwell/turn 时序）。
 public protocol DragClock: Sendable {
     func now() -> TimeInterval
@@ -106,9 +112,18 @@ public final class DragSessionController {
         if catalogGeneration != transaction.catalogGeneration {
             return cancel(reason: .catalogRefresh)
         }
+        let enteredMainMoveOut = geometry.topLevelMoveOutBounds != nil
+            && lastGeometry?.topLevelMoveOutBounds == nil
         lastPoint = point
         lastGeometry = geometry
         var events: [DragSessionEvent] = []
+        if enteredMainMoveOut {
+            // A folder's terminal edge is not the main pager's terminal edge.
+            // Re-enter once in the new context even when the pointer did not move.
+            events += edgeScheduler.cancel().map { .edge($0) }
+            edgeScheduler = EdgePagingScheduler()
+            edgeDwellDeadline = nil
+        }
 
         if state == .pressed {
             guard let down = downPoint else { return [] }
@@ -121,7 +136,8 @@ public final class DragSessionController {
 
         // move-out 显式 arm（folder scope；Q4 M5）。
         if case .folder = transaction.scope, let down = downPoint {
-            moveOutArmed = point.distance(to: down) >= parameters.overlayMoveOutArmThresholdPT
+            moveOutArmed = geometry.topLevelMoveOutBounds != nil
+                || point.distance(to: down) >= parameters.overlayMoveOutArmThresholdPT
         }
 
         // edge 调度（dragging / edgeTurnPending）。
@@ -165,17 +181,28 @@ public final class DragSessionController {
         return events.map { DragSessionEvent.edge($0) }
     }
 
+    /// Shared release classification; uses existing transaction input, never diagnostic storage.
+    func releaseExceedsDragThreshold(at point: DragPoint) -> Bool {
+        guard let downPoint else { return false }
+        return point.distance(to: downPoint) >= parameters.dragStartThresholdPT
+    }
+
     /// pointer-up：未过阈值 → click；过阈值 → drop 校验 + mutation 提交。
     @discardableResult
     public func pointerUp(at point: DragPoint,
                           geometry: DragGeometry,
                           layout: PersistentWorkspaceLayout,
-                          catalogGeneration: UInt64) -> [DragSessionEvent] {
+                          catalogGeneration: UInt64,
+                          folderTitleProvider: FolderCreationTitleProvider? = nil) -> [DragSessionEvent] {
         guard state != .idle else { return [] }
         guard let transaction = activeTransaction else { return [] }
 
         if state == .pressed {
+            let displaced = releaseExceedsDragThreshold(at: point)
             resetSession()
+            // Missing/coalesced moves must not turn a distant release into an app launch.
+            // There was no presented drag, so do not synthesize a mutation on release.
+            if displaced { lastOutcome = .noOp; return [.noOp] }
             return [.clicked]
         }
 
@@ -204,7 +231,14 @@ public final class DragSessionController {
             lastOutcome = .rejected(reason)
             return [.rejected(reason)]
         case .accept(let acceptedIntent):
-            let result = DragMutationEngine.apply(intent: acceptedIntent, source: source, layout: layout)
+            let folderTitle: String?
+            if case .createFolder(let target) = acceptedIntent,
+               case .topLevelApp(let app) = source {
+                // Use the accepted release target, never the last hover's cached intent.
+                folderTitle = folderTitleProvider?(target, app, layout)
+            } else { folderTitle = nil }
+            let result = DragMutationEngine.apply(intent: acceptedIntent, source: source,
+                                                   layout: layout, folderTitle: folderTitle)
             switch result {
             case .success(let newLayout):
                 resetSession()
@@ -256,7 +290,8 @@ public final class DragSessionController {
                                           topLevelFrames: geometry.topLevelFrames,
                                           containerWidth: geometry.containerWidth,
                                           moveOutArmed: moveOutArmed,
-                                          parameters: parameters)
+                                          parameters: parameters,
+                                          topLevelMoveOutBounds: geometry.topLevelMoveOutBounds)
         return DropZoneClassifier.classify(pointer: point, source: source, zones: zones)
     }
 

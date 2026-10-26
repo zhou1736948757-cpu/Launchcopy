@@ -144,17 +144,21 @@ public struct DropZones: Equatable, Sendable {
     public var moveOutArmed: Bool
     /// 中心区判定余量（dropZoneMarginsPT；无新增参数）。
     public var marginPT: Double
+    /// Explicit visible-main presentation; nil preserves open-folder row priority.
+    public var topLevelMoveOutBounds: DragRect?
 
     public init(itemFrames: [DragItemFrame] = [],
                 topLevelFrames: [DragItemFrame]? = nil,
                 folderCellZones: [FolderCellZone] = [],
                 moveOutArmed: Bool = false,
-                marginPT: Double = 0) {
+                marginPT: Double = 0,
+                topLevelMoveOutBounds: DragRect? = nil) {
         self.itemFrames = itemFrames
         self.topLevelFrames = topLevelFrames ?? itemFrames
         self.folderCellZones = folderCellZones
         self.moveOutArmed = moveOutArmed
         self.marginPT = marginPT
+        self.topLevelMoveOutBounds = topLevelMoveOutBounds
     }
 }
 
@@ -168,10 +172,12 @@ public enum DropZoneBuilder {
                              topLevelFrames: [DragItemFrame],
                              containerWidth: Double,
                              moveOutArmed: Bool,
-                             parameters: DragParameters) -> DropZones {
+                             parameters: DragParameters,
+                             topLevelMoveOutBounds: DragRect? = nil) -> DropZones {
         let margin = parameters.dropZoneMarginsPT
         var zones = DropZones(itemFrames: itemFrames, topLevelFrames: topLevelFrames,
-                              moveOutArmed: moveOutArmed, marginPT: margin)
+                              moveOutArmed: moveOutArmed, marginPT: margin,
+                              topLevelMoveOutBounds: topLevelMoveOutBounds)
         for frame in itemFrames + topLevelFrames {
             if case .folder(let id) = frame.identity {
                 zones.folderCellZones.append(FolderCellZone(
@@ -187,6 +193,12 @@ public enum DropZoneClassifier {
     public static func classify(pointer: DragPoint,
                                 source: DragSourceIdentity,
                                 zones: DropZones) -> DropIntent {
+        if let bounds = zones.topLevelMoveOutBounds {
+            guard zones.moveOutArmed, bounds.x.isFinite, bounds.y.isFinite,
+                  bounds.maxX.isFinite, bounds.maxY.isFinite,
+                  bounds.width > 0, bounds.height > 0,
+                  bounds.contains(pointer) else { return .invalid }
+        }
         // folder cell → move into（含跨 folder；移入自身 folder 由引擎 no-op）。
         if let cell = zones.folderCellZones.first(where: { $0.rect.contains(pointer) }) {
             if case .topLevelFolder = source { return .invalid }
@@ -194,18 +206,27 @@ public enum DropZoneClassifier {
         }
         switch source {
         case .topLevelFolder:
-            // folder 源命中 app 中心 → 无语义（不合并，Q14）；其余 → 分区/计数插入。
-            if centerAppIdentity(pointer: pointer, zones: zones) != nil { return .invalid }
+            // Folder sources cannot merge with an app grouping target; elsewhere they reorder.
+            if groupingAppIdentity(pointer: pointer, zones: zones) != nil { return .invalid }
             return insertionIntent(pointer: pointer, zones: zones)
 
         case .topLevelApp(let ref):
-            // 他人中心内缩区 → createFolder（落回自身 → 半区插入，引擎 no-op）。
-            if let target = centerAppIdentity(pointer: pointer, zones: zones), target != ref {
+            // Another app icon groups; a self drop falls back to ordering (engine no-op).
+            if let target = groupingAppIdentity(pointer: pointer, zones: zones), target != ref {
                 return .createFolder(target: target)
             }
             return insertionIntent(pointer: pointer, zones: zones)
 
         case .folderMember:
+            if zones.topLevelMoveOutBounds != nil {
+                guard zones.moveOutArmed else { return .invalid }
+                var visibleZones = zones
+                visibleZones.itemFrames = zones.topLevelFrames
+                guard case .insertion(let index) = insertionIntent(pointer: pointer, zones: visibleZones) else {
+                    return .invalid
+                }
+                return .topLevelTarget(index: index)
+            }
             // 成员无建夹语义：命中中心 → 降级半区插入（缺陷 4 修复，不再 .invalid）。
             //
             // 重要：folder overlay 与顶层网格常共用同一窗口坐标系。moveOutArmed 后若
@@ -252,6 +273,11 @@ public enum DropZoneClassifier {
                                                          frames: zones.itemFrames) {
             let part = DropZoneGeometry.hitZone(pointer: pointer, frame: frame.frame,
                                                 margin: zones.marginPT)
+            if let logicalIndex = frame.logicalIndex {
+                // The pointer hit owns its side: "after this item" must not jump
+                // across hidden successors to the next displayed item's index.
+                return .insertion(index: part == .leftHalf ? logicalIndex : logicalIndex + 1)
+            }
             let local = part == .leftHalf ? index : index + 1
             return .insertion(index: globalIndex(localIndex: local, frames: zones.itemFrames))
         }
@@ -264,20 +290,29 @@ public enum DropZoneClassifier {
     /// 成员帧）→ 页内下标即全局。换算仅在 intent 产出边界发生一次；同一帧列表
     /// 属同一页（D 层 makeDragGeometry 契约），取首帧注记为代表。
     private static func globalIndex(localIndex: Int, frames: [DragItemFrame]) -> Int {
+        if localIndex >= 0, localIndex < frames.count, let index = frames[localIndex].logicalIndex {
+            return index
+        }
+        if localIndex == frames.count, let index = frames.last?.logicalIndex { return index + 1 }
         guard let first = frames.first,
               let page = first.pageIndex,
               let itemsPerPage = first.itemsPerPage else { return localIndex }
         return page * itemsPerPage + localIndex
     }
 
-    /// 指针命中条目中心内缩区时的 app 身份（未命中 / 非 app 帧 → nil）。
-    private static func centerAppIdentity(pointer: DragPoint,
+    /// Runtime app grouping uses the displayed icon; legacy frames use the cell center.
+    private static func groupingAppIdentity(pointer: DragPoint,
                                           zones: DropZones) -> PersistentAppReference? {
         guard let hit = DropZoneGeometry.hitItem(pointer: pointer, frames: zones.itemFrames),
-              DropZoneGeometry.hitZone(pointer: pointer,
-                                       frame: hit.frame.frame,
-                                       margin: zones.marginPT) == .center,
               case .app(let ref) = hit.frame.identity else { return nil }
+        if let icon = hit.frame.appGroupingFrame {
+            guard icon.x.isFinite, icon.y.isFinite, icon.width.isFinite, icon.height.isFinite,
+                  icon.width > 0, icon.height > 0, icon.contains(pointer) else { return nil }
+            return ref
+        }
+        // Legacy neutral geometry has no view-provided icon target.
+        guard DropZoneGeometry.hitZone(pointer: pointer, frame: hit.frame.frame,
+                                      margin: zones.marginPT) == .center else { return nil }
         return ref
     }
 }

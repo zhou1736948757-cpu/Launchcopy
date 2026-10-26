@@ -33,6 +33,29 @@ public struct ScanReport: Sendable, Equatable {
     /// 扫描总耗时（秒）；供 telemetry `scan_duration_ms` 派生（Explorer C）。
     public let scanDuration: TimeInterval
 
+    /// Total anonymous issues, including non-blocking missing-identifier warnings.
+    /// Negative category counts contribute zero; sums saturate at Int.max.
+    /// The original category counts remain available in `failureCounts`.
+    public var failureCount: Int { severityCounts.total }
+
+    /// Included in `failureCount`: only missing identifiers are non-blocking.
+    /// If the total saturates, discovery failures take priority over warnings.
+    public var nonBlockingFailureCount: Int { severityCounts.nonBlocking }
+
+    /// Unreadable sources, corrupt/invalid bundles and symlink cycles.
+    public var discoveryFailureCount: Int { failureCount - nonBlockingFailureCount }
+
+    private var severityCounts: (total: Int, nonBlocking: Int) {
+        var discoveryCount = 0
+        for (kind, count) in failureCounts where kind != .missingBundleIdentifier {
+            let (sum, overflow) = discoveryCount.addingReportingOverflow(max(0, count))
+            discoveryCount = overflow ? Int.max : sum
+        }
+        let nonBlockingCount = min(max(0, failureCounts[.missingBundleIdentifier] ?? 0),
+                                   Int.max - discoveryCount)
+        return (discoveryCount + nonBlockingCount, nonBlockingCount)
+    }
+
     public init(appCount: Int, failureCounts: [ScanFailureKind: Int], scanDuration: TimeInterval) {
         self.appCount = appCount
         self.failureCounts = failureCounts

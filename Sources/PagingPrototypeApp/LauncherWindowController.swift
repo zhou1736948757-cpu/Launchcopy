@@ -38,6 +38,14 @@ public final class LauncherWindowController: NSObject {
     public var presentDuration: TimeInterval = 0.18
     public var dismissDuration: TimeInterval = 0.14
 
+    /// Test-only opt-in, set before attach/show. Production behavior is unchanged.
+    /// A normal window ordered behind others does not provide background input.
+    var backgroundUITestTitle = "Launchcopy — UI Test"
+    public var backgroundUITestMode = false
+    /// Only the dedicated device harness opts into ordinary-window activation.
+    var foregroundWindowedPresentation = false
+    var activateWindowedApplication: () -> Void = { NSApp.activate(ignoringOtherApps: false) }
+
     /// teardown 是否已执行（与 coordinator.teardownCount 对齐的 UI 侧标记）。
     public private(set) var isTornDown = false
 
@@ -199,6 +207,19 @@ public final class LauncherWindowController: NSObject {
 
     private func performPresent(requestID: UInt64, targetScreen: ScreenID) {
         let window = ensureWindow()
+        if backgroundUITestMode {
+            fillContentToWindowBounds(window)
+            window.alphaValue = 1
+            if foregroundWindowedPresentation {
+                window.makeKeyAndOrderFront(nil)
+                activateWindowedApplication()
+            } else {
+                window.orderBack(nil)
+            }
+            inFlightAnimationRequestID = 0
+            _ = coordinator.completeTransition(requestID: requestID)
+            return
+        }
         // 必须用 NSScreen.frame（含菜单栏后方），禁止 visibleFrame——否则顶条透出壁纸。
         let frame = resolvedScreenFrame(for: targetScreen)
         window.setFrame(frame, display: true)
@@ -310,7 +331,7 @@ public final class LauncherWindowController: NSObject {
     // MARK: - Animation + requestID guard
 
     private func effectiveDuration(_ base: TimeInterval) -> TimeInterval {
-        reduceMotionProvider() ? 0 : max(0, base)
+        (backgroundUITestMode || reduceMotionProvider()) ? 0 : max(0, base)
     }
 
     private func finishTransition(
@@ -351,6 +372,16 @@ public final class LauncherWindowController: NSObject {
     // MARK: - Panel configuration (Option B)
 
     private func configureAsScreenCoveringPanel(_ window: NSWindow) {
+        if backgroundUITestMode {
+            let desired: NSWindow.StyleMask = [.titled, .closable, .resizable]
+            if window.styleMask != desired { window.styleMask = desired }
+            window.collectionBehavior = []
+            window.level = .normal
+            window.title = backgroundUITestTitle
+            window.isReleasedWhenClosed = false
+            fillContentToWindowBounds(window)
+            return
+        }
         // 公开 API borderless panel：覆盖目标屏 frame，不进入独立 fullscreen Space。
         if window.styleMask.contains(.fullScreen) {
             // 若曾误入系统全屏，退出后再改形态（避免残留 Space）。
@@ -380,7 +411,8 @@ public final class LauncherWindowController: NSObject {
 
     /// 将 contentView（及常见全宽子视图）铺满当前 contentLayoutRect。
     private func fillContentToWindowBounds(_ window: NSWindow) {
-        let bounds = NSRect(origin: .zero, size: window.frame.size)
+        let bounds = NSRect(origin: .zero, size: backgroundUITestMode
+                            ? window.contentLayoutRect.size : window.frame.size)
         guard let content = window.contentView else { return }
         if content.frame.size != bounds.size || content.frame.origin != .zero {
             content.frame = bounds

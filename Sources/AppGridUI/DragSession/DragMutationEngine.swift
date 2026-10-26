@@ -17,7 +17,8 @@ import Foundation
 public enum DragMutationEngine {
     public static func apply(intent: DropIntent,
                              source: DragSourceIdentity,
-                             layout: PersistentWorkspaceLayout) -> LayoutMutationResult {
+                             layout: PersistentWorkspaceLayout,
+                             folderTitle: String? = nil) -> LayoutMutationResult {
         let mutation = LayoutMutation(expectedGeneration: layout.generation)
 
         switch intent {
@@ -51,7 +52,7 @@ public enum DragMutationEngine {
             guard case .topLevelApp(let ref) = source else {
                 return .rejected(.invalidTarget)
             }
-            return mutation.createFolder(in: layout, target: target, source: ref)
+            return mutation.createFolder(in: layout, target: target, source: ref, title: folderTitle)
 
         case .intoFolder(let targetFolderID, let position):
             // M4：顶层 app 移入 / 跨 folder 原子 move；folder-on-folder 拒绝。

@@ -6,10 +6,10 @@
 //  PinchEvent.showRequested(token:) → LauncherPresentationCoordinator.show(source: .fourFingerPinch, targetScreen:)。
 //  纯逻辑值类型：不触碰窗口行为代码/AppDelegate；targetScreen 由接线层注入（T-1G-E 接真实屏幕）。
 //  语义（PLAN §9 不变量 2/3；PHASE1G_ACTIVATION_ENTRY_HOT_CORNER_PROMPT §21.1/§19.3）：
-//  - 四指只发 show，永不 hide/quit（不变量 3；quit 由呈现协调器独占）。
+//  - Inward Show keeps its original path. Optional outward Hide only returns admission; the host owns effects.
 //  - 同一 PinchEventToken 只产生一次 show（token.generation + sessionID 去重，§19.3）。
-//  - Q-1（Workflow/decisions/2026-09-05-pending-questions-1g.md）：识别器 suspend() 不递增
-//    generation → 本层在 suspend 时清空排队 show（"suspend 时清队列"），suspend 前排队事件不得重放。
+//  - Inward-only suspend preserves its historical generation/Show queue contract.
+//    Optional mode also fences the generation so retained external Hide events cannot replay.
 //  - QUESTION-1（T-G-P3-r1）：provider 重复上报 ready → 幂等接受（不崩溃、不重复启动服务）。
 //  - QUESTION-2（T-G-P3-r1）：displayKind (enabled:true, state:.off) → .disabled
 //    （后端 off = 无活动，事实展示；开关开不冒充就绪）。
@@ -29,18 +29,32 @@ public struct FourFingerActivationCoordinator: Sendable {
     public private(set) var activation: FourFingerActivationStateMachine
     /// 目标屏幕（由接线层注入；T-1G-E 接真实屏幕列表）。
     public var targetScreen: ScreenID
-    /// 用户开关（来自 ActivationPreferences；接线层注入；仅用于展示，不 gate 识别器生命周期）。
-    public var userEnabled: Bool
+    /// Parent preference. Optional-mode edits fence actions without owning provider lifecycle.
+    public var userEnabled: Bool {
+        didSet {
+            guard userEnabled != oldValue, outwardHideEnabled else { return }
+            recognizer.invalidateOutwardHideRequests()
+            clearPendingActions()
+        }
+    }
 
     /// 去重：最近一次已消费（产生 show）的事件 token（§19.3）。
     public private(set) var lastConsumedToken: PinchEventToken?
     /// 排队中的 show 事件（Q-1：suspend/stop/restart 时清空；有界，防接线层不 flush 的积压）。
     public private(set) var pendingShowTokens: [PinchEventToken]
+    public private(set) var pendingHideTokens: [PinchEventToken] = []
+    /// Most recently accepted Hide token; nil after refusal-only flush or invalidation.
+    public private(set) var lastAcceptedHideToken: PinchEventToken? = nil
+    // Session IDs increase for this recognizer's lifetime. A high-water mark gives
+    // bounded, fail-closed replay protection across both directions in optional mode.
+    private var consumedActionSessionID: Int?
     /// 交接 token：show 派发后到会话结束前，新 show 去重（§21.1）。
     public private(set) var handoffToken: PinchEventToken?
 
     // 中性计数（允许记录；PLAN §9 不变量 7）
     public private(set) var showCount: Int
+    public private(set) var hideCount: Int = 0
+    public private(set) var suppressedHideCount: Int = 0
     public private(set) var suppressedShowCount: Int
     public private(set) var droppedStaleEventCount: Int
     public private(set) var droppedDuplicateEventCount: Int
@@ -50,6 +64,7 @@ public struct FourFingerActivationCoordinator: Sendable {
 
     /// 排队上限（防积压；超出丢新事件并计数——首个手势优先）。
     public static let maxPendingShowTokens = 8
+    public static let maxPendingHideTokens = 8
 
     /// 标准 init：创建识别器（注入 clock 与参数）、呈现协调器、状态机。
     public init(clock: PinchClock,
@@ -108,6 +123,22 @@ public struct FourFingerActivationCoordinator: Sendable {
         displayStatus.isReady
     }
 
+    public var outwardHideEnabled: Bool { recognizer.outwardHideEnabled }
+    var requiresValidatedFrameTime: Bool { recognizer.requiresValidatedFrameTime }
+
+    /// Mode edits invalidate queued actions and hold contacts without provider work.
+    public mutating func setOutwardHideEnabled(_ enabled: Bool) {
+        guard enabled != outwardHideEnabled else { return }
+        recognizer.setOutwardHideEnabled(enabled)
+        clearPendingActions()
+    }
+
+    /// A rejected queued frame is not release evidence or a new contact session.
+    mutating func requireReleaseAfterDeliveryInvalidation(_ device: PinchDeviceID) {
+        recognizer.requireReleaseAfterDeliveryInvalidation(device)
+        clearPendingActions()
+    }
+
     // MARK: - 生命周期（接线层驱动；识别器与状态机同步）
 
     /// 启动：识别器 → idle；状态机 → checking（幂等）。
@@ -120,9 +151,7 @@ public struct FourFingerActivationCoordinator: Sendable {
     public mutating func stop() {
         recognizer.stop()
         _ = activation.apply(.stop)
-        pendingShowTokens.removeAll()
-        handoffToken = nil
-        lastConsumedToken = nil
+        clearPendingActions()
     }
 
     /// 重启：识别器 generation+1 → idle；状态机 off → checking；清排队与交接。
@@ -130,19 +159,23 @@ public struct FourFingerActivationCoordinator: Sendable {
         recognizer.restart()
         _ = activation.apply(.stop)
         _ = activation.apply(.start)
-        pendingShowTokens.removeAll()
-        handoffToken = nil
-        lastConsumedToken = nil
+        clearPendingActions()
     }
 
     /// 挂起（sleep/会话不活跃/屏幕重配）：转发识别器/状态机/呈现协调器；
-    /// **Q-1：清空排队 show**（suspend 不递增识别器 generation，只能靠清队列防重放）。
+    /// Clears both queues. Optional mode additionally invalidates the recognizer generation.
     @discardableResult
     public mutating func suspend(reason: PinchSuspensionReason) -> LauncherPresentationEffect {
         recognizer.suspend(reason: reason)
         _ = activation.apply(.suspend(reason: reason))
         pendingShowTokens.removeAll()
+        pendingHideTokens.removeAll()
+        lastAcceptedHideToken = nil
         handoffToken = nil
+        if outwardHideEnabled {
+            lastConsumedToken = nil
+            consumedActionSessionID = nil
+        }
         return presentation.suspend(reason: launcherSuspensionReason(reason))
     }
 
@@ -160,17 +193,22 @@ public struct FourFingerActivationCoordinator: Sendable {
     /// 返回事件仅供观察/测试断言（已自动入队）；派发请调用 flushPendingShows()。
     /// 注意：不要对返回值再调用 handlePinchEvent（会重复入队；去重保证安全，但属误用）。
     @discardableResult
-    public mutating func process(_ frame: PinchFrame) -> [PinchEvent] {
+    public mutating func process(_ frame: PinchFrame, allowOutwardHide: Bool = true) -> [PinchEvent] {
         let wasLatched = recognizer.state == .fired || recognizer.state == .waitingForRelease
-        let events = recognizer.process(frame)
+        let hideAdmitted = allowOutwardHide && canAcceptHide
+        if !hideAdmitted { discardPendingHides() }
+        let rejectedBefore = recognizer.rejectedFrameCount
+        let events = recognizer.process(frame, allowOutwardHide: hideAdmitted)
+        if outwardHideEnabled,
+           recognizer.rejectedFrameCount != rejectedBefore || frame.phase == .cancelled {
+            discardPendingHides()
+        }
         // §21.1 会话结束（全指释放）优先：交接清除（排队保留——延迟派发的 show 仍应生效）
         if wasLatched && recognizer.state == .idle {
             handoffToken = nil
         }
         for event in events {
-            if case .showRequested(let token) = event {
-                enqueueShow(token: token)
-            }
+            handlePinchEvent(event)
         }
         return events
     }
@@ -178,14 +216,16 @@ public struct FourFingerActivationCoordinator: Sendable {
     /// 外部事件源路径：showRequested 事件入队（与 process 同一队列），由 flushPendingShows() 派发。
     /// 契约：外部源不得跨 suspend 保留事件（suspend 清队列；挂起期间到达的事件在派发时被拒）。
     public mutating func handlePinchEvent(_ event: PinchEvent) {
-        if case .showRequested(let token) = event {
-            enqueueShow(token: token)
+        switch event {
+        case .showRequested(let token): enqueueShow(token: token)
+        case .hideRequested(let token): enqueueHide(token: token)
         }
     }
 
     /// T-1G-E：与 `LauncherWindowController` 同步同一份 presentation 状态机（flush 前后调用）。
     public mutating func adoptPresentation(_ presentation: LauncherPresentationCoordinator) {
         self.presentation = presentation
+        if outwardHideEnabled, !canAcceptHide { discardPendingHides() }
     }
 
     /// 派发排队中的 show 事件（按入队顺序；含全部校验：terminating/suspended/generation/去重/交接）。
@@ -199,12 +239,40 @@ public struct FourFingerActivationCoordinator: Sendable {
         return effects
     }
 
+    /// Takes all queued Hide requests, accepts at most one, and never changes presentation.
+    /// The host must recheck generation, visibility and admission around its preparation/effect.
+    @discardableResult
+    public mutating func flushPendingHides(allowHide: Bool) -> Bool {
+        var accepted = false
+        lastAcceptedHideToken = nil
+        for token in pendingHideTokens {
+            let blockedByHandoff = handoffToken.map { $0 != token } ?? false
+            guard consumeAction(token) else {
+                suppressedHideCount += 1
+                continue
+            }
+            guard !accepted, allowHide, canAcceptHide, !blockedByHandoff else {
+                if blockedByHandoff { droppedHandoffEventCount += 1 }
+                suppressedHideCount += 1
+                continue
+            }
+            handoffToken = token
+            lastAcceptedHideToken = token
+            hideCount += 1
+            accepted = true
+        }
+        pendingHideTokens.removeAll()
+        if let token = lastAcceptedHideToken { lastConsumedToken = token }
+        return accepted
+    }
+
     // MARK: - 后端事实（QUESTION-1）
 
     /// 处理 provider 状态变化（仅更新状态机；识别器生命周期由 start/stop 驱动）。
     /// QUESTION-1：重复上报 ready → 幂等接受（不崩溃、不重复启动服务）。
     /// 无合法转换的 provider 报告被安全忽略（状态不变，不崩溃）。
     public mutating func handleProviderState(_ state: TouchProviderState) {
+        let previousState = activation.state
         switch state {
         case .off:
             _ = activation.apply(.stop)
@@ -214,6 +282,10 @@ public struct FourFingerActivationCoordinator: Sendable {
                 break // 已 checking：no-op
             case .noDevice, .unavailable, .permissionNotConfirmed:
                 _ = activation.apply(.recheck) // 重新检查
+            case .ready where outwardHideEnabled:
+                // Backend revalidation is not Ready for optional Hide. No provider restart.
+                _ = activation.apply(.stop)
+                _ = activation.apply(.start)
             default:
                 break // ready/off/suspended：无合法转换，忽略（状态机契约）
             }
@@ -229,11 +301,79 @@ public struct FourFingerActivationCoordinator: Sendable {
         case .suspended(let reason):
             _ = activation.apply(.suspend(reason: reason))
         }
+        if outwardHideEnabled, activation.state != .ready {
+            discardPendingHides()
+            if activation.state != previousState {
+                recognizer.invalidateOutwardHideRequests()
+                clearPendingActions()
+            }
+        }
     }
 
     // MARK: - 私有
 
+    private var canAcceptShow: Bool {
+        guard isReady, recognizer.isEnabled else { return false }
+        if case .suspended = recognizer.state { return false }
+        if case .suspended = presentation.state { return false }
+        return presentation.state != .terminating
+    }
+
+    private var canAcceptHide: Bool {
+        guard outwardHideEnabled, canAcceptShow else { return false }
+        guard case .visible = presentation.state else { return false }
+        return true
+    }
+
+    private mutating func clearPendingActions() {
+        pendingShowTokens.removeAll()
+        pendingHideTokens.removeAll()
+        lastAcceptedHideToken = nil
+        handoffToken = nil
+        lastConsumedToken = nil
+        consumedActionSessionID = nil
+    }
+
+    /// Current-generation refusals are consumed too; neither direction may replay them.
+    private mutating func consumeAction(_ token: PinchEventToken) -> Bool {
+        guard token.generation == recognizer.generation else {
+            droppedStaleEventCount += 1
+            return false
+        }
+        guard token != lastConsumedToken,
+              consumedActionSessionID.map({ token.sessionID.rawValue > $0 }) ?? true else {
+            droppedDuplicateEventCount += 1
+            return false
+        }
+        lastConsumedToken = token
+        consumedActionSessionID = token.sessionID.rawValue
+        return true
+    }
+
+    private mutating func discardPendingHides() {
+        lastAcceptedHideToken = nil
+        for token in pendingHideTokens {
+            _ = consumeAction(token)
+            suppressedHideCount += 1
+        }
+        pendingHideTokens.removeAll()
+    }
+
+    private mutating func enqueueHide(token: PinchEventToken) {
+        guard canAcceptHide, pendingHideTokens.count < Self.maxPendingHideTokens else {
+            _ = consumeAction(token)
+            suppressedHideCount += 1
+            return
+        }
+        pendingHideTokens.append(token)
+    }
+
     private mutating func enqueueShow(token: PinchEventToken) {
+        if outwardHideEnabled, !canAcceptShow {
+            _ = consumeAction(token)
+            suppressedShowCount += 1
+            return
+        }
         guard pendingShowTokens.count < Self.maxPendingShowTokens else {
             suppressedShowCount += 1
             return // 有界：超出丢新事件（首个手势优先）
@@ -241,8 +381,24 @@ public struct FourFingerActivationCoordinator: Sendable {
         pendingShowTokens.append(token)
     }
 
-    /// 单事件派发（全部校验；四指只发 show，永不 hide/quit——不变量 3）。
+    /// Existing Show dispatch; optional-mode requests share consumed-session protection.
     private mutating func dispatchShow(token: PinchEventToken) -> LauncherPresentationEffect {
+        // Optional mode also rejects replays of refused Hide and older consumed sessions.
+        if outwardHideEnabled {
+            let blockedByHandoff = handoffToken.map { $0 != token } ?? false
+            guard consumeAction(token) else {
+                suppressedShowCount += 1
+                return .none
+            }
+            guard canAcceptShow, !blockedByHandoff else {
+                if blockedByHandoff { droppedHandoffEventCount += 1 }
+                suppressedShowCount += 1
+                return .none
+            }
+            handoffToken = token
+            showCount += 1
+            return presentation.show(source: .fourFingerPinch, targetScreen: targetScreen)
+        }
         // §21.1：正在 Quit → 拒绝新请求
         if presentation.state == .terminating {
             droppedTerminatingEventCount += 1

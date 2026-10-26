@@ -27,7 +27,7 @@ public extension AppGridCellView {
         } else {
             layer?.borderWidth = 0
             layer?.borderColor = NSColor.clear.cgColor
-            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            layer?.backgroundColor = nil
             setAccessibilityFocused(false)
         }
     }

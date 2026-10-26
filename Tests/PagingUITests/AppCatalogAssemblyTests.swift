@@ -150,6 +150,283 @@ final class AppCatalogAssemblyTests: XCTestCase {
         XCTAssertEqual(CatalogRoots.defaults.count, 4)
     }
 
+    func testRendererLayoutModeTracksOnlyCommittedSearchQuery() {
+        let assembly = AppCatalogAssembly(roots: [factory.root], loader: RecordingIconLoader())
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 700))
+        assembly.renderer.renderTarget = host
+        let appID = CatalogFixture.appID("fixture.alpha")
+        let record = CatalogFixture.record(id: appID, displayName: "Alpha", bundleID: "fixture.alpha",
+                                           url: CatalogFixture.tempURL(named: "alpha.app"),
+                                           icon: IconIdentity.from(appID: appID), rootPriority: 0)
+        assembly.provider.receive(CatalogSnapshot(revision: CatalogRevision(1), records: [record]))
+        _ = assembly.provider.applyPending(atCurrentPage: 0)
+        let content = PagingPageContent(
+            presentationID: PagePresentationID(revision: 1, pageIndex: 0),
+            items: [PagingPageContentItem(slot: 0, identity: AnyHashable(appID),
+                                          title: "Alpha")],
+            isPlaceholder: false)
+
+        assembly.renderer.render(pageIndex: 0, content: content, pageCount: 1, reuseGeneration: 1)
+        XCTAssertEqual(assembly.renderer.pageView(forPage: 0)?.layoutMode, .ordinary)
+
+        let query = AppSearchQuery(raw: "alp")
+        assembly.provider.stageSearchResult(AppSearchResultSet(
+            baseCatalogRevision: CatalogRevision(1), queryGeneration: AppSearchGeneration(1),
+            records: [record]))
+        assembly.renderer.render(pageIndex: 0, content: content, pageCount: 1, reuseGeneration: 2)
+        XCTAssertEqual(assembly.renderer.pageView(forPage: 0)?.layoutMode, .ordinary,
+                       "pending input must not change geometry")
+
+        XCTAssertTrue(assembly.provider.commitPendingSearchResult(query: query))
+        assembly.renderer.render(pageIndex: 0, content: content, pageCount: 1, reuseGeneration: 3)
+        XCTAssertEqual(assembly.renderer.pageView(forPage: 0)?.layoutMode, .search)
+        assembly.teardown()
+    }
+
+    func testRendererResolvesOnlyLiveFolderCellFrame() {
+        let assembly = AppCatalogAssembly(roots: [factory.root], loader: RecordingIconLoader())
+        let host = NSView(frame: NSRect(x: 20, y: 30, width: 700, height: 700))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 800))
+        container.addSubview(host)
+        assembly.renderer.committedPageProvider = { 0 }
+        assembly.renderer.renderTarget = host
+        let folderID = FolderID(uuid: UUID(uuidString: "00000000-0000-0000-0000-00000000001A")!)
+        let content = PagingPageContent(
+            presentationID: PagePresentationID(revision: 1, pageIndex: 0),
+            items: [PagingPageContentItem(slot: 0, identity: AnyHashable(folderID),
+                                          title: "Group")],
+            isPlaceholder: false)
+
+        assembly.renderer.render(pageIndex: 0, content: content, pageCount: 1,
+                                 reuseGeneration: 1)
+        host.layoutSubtreeIfNeeded()
+        let cell = assembly.renderer.pageView(forPage: 0)?.cell(at: 0)
+        XCTAssertEqual(assembly.renderer.liveFolderFrame(for: folderID, convertedTo: container),
+                       cell.map { $0.convert($0.bounds, to: container) })
+        XCTAssertNil(assembly.renderer.liveFolderFrame(for: FolderID(), convertedTo: container),
+                     "an unrelated or off-screen folder must not provide a motion anchor")
+        assembly.teardown()
+    }
+
+    func testRendererUsesCommittedPageWhenAttachedPagesShareFolderID() {
+        let assembly = AppCatalogAssembly(roots: [factory.root], loader: RecordingIconLoader())
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 1_400, height: 800))
+        let host0 = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 700))
+        let host1 = NSView(frame: NSRect(x: 700, y: 0, width: 600, height: 700))
+        container.addSubview(host0)
+        container.addSubview(host1)
+        let folderID = FolderID(uuid: UUID(uuidString: "00000000-0000-0000-0000-00000000001B")!)
+        let content0 = PagingPageContent(
+            presentationID: PagePresentationID(revision: 1, pageIndex: 0),
+            items: [PagingPageContentItem(slot: 0, identity: AnyHashable(folderID), title: "Group 0")],
+            isPlaceholder: false)
+        let content1 = PagingPageContent(
+            presentationID: PagePresentationID(revision: 1, pageIndex: 1),
+            items: [PagingPageContentItem(slot: 0, identity: AnyHashable(folderID), title: "Group 1")],
+            isPlaceholder: false)
+
+        var committedPage = 1
+        assembly.renderer.committedPageProvider = { committedPage }
+        assembly.renderer.renderTarget = host0
+        assembly.renderer.render(pageIndex: 0, content: content0, pageCount: 2, reuseGeneration: 1)
+        assembly.renderer.renderTarget = host1
+        assembly.renderer.render(pageIndex: 1, content: content1, pageCount: 2, reuseGeneration: 1)
+        container.layoutSubtreeIfNeeded()
+        assembly.renderer.pageView(forPage: 0)?.layoutSubtreeIfNeeded()
+        assembly.renderer.pageView(forPage: 1)?.layoutSubtreeIfNeeded()
+
+        let frame0 = try! XCTUnwrap(assembly.renderer.pageView(forPage: 0)?.cell(at: 0))
+            .convert(try! XCTUnwrap(assembly.renderer.pageView(forPage: 0)?.cell(at: 0)).bounds, to: container)
+        let frame1 = try! XCTUnwrap(assembly.renderer.pageView(forPage: 1)?.cell(at: 0))
+            .convert(try! XCTUnwrap(assembly.renderer.pageView(forPage: 1)?.cell(at: 0)).bounds, to: container)
+        XCTAssertEqual(assembly.renderer.liveFolderFrame(for: folderID, convertedTo: container), frame1)
+
+        committedPage = 0
+        XCTAssertEqual(assembly.renderer.liveFolderFrame(for: folderID, convertedTo: container), frame0)
+
+        assembly.renderer.committedPageProvider = nil
+        XCTAssertNil(assembly.renderer.liveFolderFrame(for: folderID, convertedTo: container),
+                     "An anchor is unsafe when committed-page ownership is not wired")
+        assembly.teardown()
+    }
+
+    func testRendererConvertsActualFolderGlyphIntoFlippedHostCoordinates() throws {
+        let fixture = try makeFolderIconFixture(flippedDestination: true)
+        defer { fixture.assembly.teardown() }
+        let symbol = try XCTUnwrap(fixture.cell.subviews.compactMap { $0 as? NSImageView }
+            .first { $0 !== fixture.cell.iconView })
+        symbol.frame = symbol.frame.insetBy(dx: 3, dy: 5).offsetBy(dx: 1, dy: -1)
+        let glyph = try XCTUnwrap(fixture.cell.folderMotionSourceFrame)
+        let inRoot = fixture.cell.convert(glyph, to: fixture.root)
+        let destination = fixture.destination
+        let expected = NSRect(
+            x: inRoot.minX - destination.frame.minX + destination.bounds.minX,
+            y: destination.bounds.maxY - (inRoot.maxY - destination.frame.minY),
+            width: inRoot.width, height: inRoot.height)
+        let actual = try XCTUnwrap(fixture.assembly.renderer.liveFolderIconFrame(
+            for: fixture.folderID, convertedTo: destination))
+        XCTAssertEqual(actual.minX, expected.minX, accuracy: 0.0001)
+        XCTAssertEqual(actual.minY, expected.minY, accuracy: 0.0001)
+        XCTAssertEqual(actual.width, expected.width, accuracy: 0.0001)
+        XCTAssertEqual(actual.height, expected.height, accuracy: 0.0001)
+        let fullCell = try XCTUnwrap(fixture.assembly.renderer.liveFolderFrame(
+            for: fixture.folderID, convertedTo: destination))
+        XCTAssertLessThan(actual.width, fullCell.width)
+        XCTAssertLessThan(actual.height, fullCell.height)
+
+        // A destination coordinate system need not contain the source glyph.
+        destination.frame.size = NSSize(width: 20, height: 20)
+        XCTAssertNotNil(fixture.assembly.renderer.liveFolderIconFrame(
+            for: fixture.folderID, convertedTo: destination))
+        XCTAssertNil(fixture.assembly.renderer.liveFolderIconFrame(
+            for: fixture.folderID, convertedTo: NSView(frame: fixture.root.bounds)),
+            "An unrelated hierarchy cannot supply a coordinate conversion")
+    }
+
+    func testRendererGlyphSourceUsesOnlyCurrentCommittedPage() throws {
+        let fixture = try makeFolderIconFixture()
+        defer { fixture.assembly.teardown() }
+        let renderer = fixture.assembly.renderer
+        let adjacentHost = NSView(frame: NSRect(x: 760, y: 50, width: 700, height: 700))
+        fixture.root.addSubview(adjacentHost)
+        let adjacentOnlyID = FolderID()
+        renderer.renderTarget = adjacentHost
+        renderer.render(pageIndex: 1, content: PagingPageContent(
+            presentationID: PagePresentationID(revision: 1, pageIndex: 1),
+            items: [PagingPageContentItem(slot: 35, identity: AnyHashable(fixture.folderID), title: "Duplicate"),
+                    PagingPageContentItem(slot: 36, identity: AnyHashable(adjacentOnlyID), title: "Adjacent only")],
+            isPlaceholder: false), pageCount: 2, reuseGeneration: 2)
+        let page1 = try XCTUnwrap(renderer.pageView(forPage: 1))
+        adjacentHost.layoutSubtreeIfNeeded()
+        let cell1 = try XCTUnwrap(page1.cell(at: 0))
+        let glyph1 = try XCTUnwrap(cell1.folderMotionSourceFrame)
+        var committedPage = 0
+        renderer.committedPageProvider = { committedPage }
+        XCTAssertEqual(renderer.liveFolderIconFrame(for: fixture.folderID, convertedTo: fixture.root),
+                       fixture.cell.convert(try XCTUnwrap(fixture.cell.folderMotionSourceFrame), to: fixture.root))
+        XCTAssertNil(renderer.liveFolderIconFrame(for: adjacentOnlyID, convertedTo: fixture.root))
+        committedPage = 1
+        XCTAssertEqual(renderer.liveFolderIconFrame(for: fixture.folderID, convertedTo: fixture.root),
+                       cell1.convert(glyph1, to: fixture.root))
+        // The requested destination does not clip a valid source on its committed page.
+        XCTAssertNotNil(renderer.liveFolderIconFrame(for: adjacentOnlyID, convertedTo: fixture.destination))
+        committedPage = 2
+        XCTAssertNil(renderer.liveFolderIconFrame(for: fixture.folderID, convertedTo: fixture.root))
+        renderer.committedPageProvider = nil
+        XCTAssertNil(renderer.liveFolderIconFrame(for: fixture.folderID, convertedTo: fixture.root))
+    }
+
+    func testRendererGlyphSourceRejectsHiddenDetachedOffscreenAndClearedSources() throws {
+        let fixture = try makeFolderIconFixture()
+        defer { fixture.assembly.teardown() }
+        let renderer = fixture.assembly.renderer
+        func source() -> NSRect? {
+            renderer.liveFolderIconFrame(for: fixture.folderID, convertedTo: fixture.destination)
+        }
+        XCTAssertNotNil(source())
+        XCTAssertNil(renderer.liveFolderIconFrame(for: FolderID(), convertedTo: fixture.destination))
+        fixture.cell.isHidden = true
+        XCTAssertNil(source())
+        fixture.cell.isHidden = false
+        fixture.page.isHidden = true
+        XCTAssertNil(source())
+        fixture.page.isHidden = false
+        fixture.pageHost.isHidden = true
+        XCTAssertNil(source())
+        fixture.pageHost.isHidden = false
+        let originalFrame = fixture.cell.frame
+        fixture.cell.frame.origin.x = fixture.page.bounds.maxX + 100
+        XCTAssertNil(source(), "A wholly offscreen glyph must not provide an anchor")
+        fixture.cell.frame = originalFrame
+        fixture.cell.removeFromSuperview()
+        XCTAssertNil(source())
+        fixture.page.addSubview(fixture.cell)
+        fixture.page.removeFromSuperview()
+        XCTAssertNil(source())
+        fixture.pageHost.addSubview(fixture.page)
+        fixture.pageHost.removeFromSuperview()
+        XCTAssertNil(source(), "A retired host is invalid before the renderer sweeps it")
+        fixture.root.addSubview(fixture.pageHost)
+        XCTAssertNotNil(source())
+        fixture.page.clearForReuse()
+        XCTAssertNil(source())
+    }
+
+    func testRendererGlyphSourceRejectsNonFolderStaleBindingAndReusedHost() throws {
+        let fixture = try makeFolderIconFixture()
+        defer { fixture.assembly.teardown() }
+        let renderer = fixture.assembly.renderer
+        let original = try XCTUnwrap(fixture.cell.bindingToken)
+        fixture.cell.bind(name: "Not a folder", token: original)
+        fixture.cell.layout()
+        XCTAssertNil(renderer.liveFolderIconFrame(for: fixture.folderID, convertedTo: fixture.root))
+        // The legacy whole-cell API retains its identity-only behavior.
+        XCTAssertNotNil(renderer.liveFolderFrame(for: fixture.folderID, convertedTo: fixture.root))
+        let stale = ItemBindingToken(catalogRevision: original.catalogRevision,
+                                    pageIdentity: original.pageIdentity,
+                                    itemSlot: original.itemSlot, appID: original.appID,
+                                    reuseGeneration: original.reuseGeneration,
+                                    iconKey: nil, surfaceGeneration: original.surfaceGeneration + 1)
+        fixture.cell.bindFolder(title: "Stale", memberCount: 0, token: stale)
+        fixture.cell.layout()
+        XCTAssertNil(renderer.liveFolderIconFrame(for: fixture.folderID, convertedTo: fixture.root))
+        let stalePage = ItemBindingToken(catalogRevision: original.catalogRevision,
+                                        pageIdentity: PagePresentationID(revision: 1, pageIndex: 1),
+                                        itemSlot: original.itemSlot, appID: original.appID,
+                                        reuseGeneration: original.reuseGeneration,
+                                        iconKey: nil, surfaceGeneration: original.surfaceGeneration)
+        fixture.cell.bindFolder(title: "Wrong page", memberCount: 0, token: stalePage)
+        fixture.cell.layout()
+        XCTAssertNil(renderer.liveFolderIconFrame(for: fixture.folderID, convertedTo: fixture.root))
+
+        let replacementID = FolderID()
+        renderer.renderTarget = fixture.pageHost
+        renderer.render(pageIndex: 1, content: PagingPageContent(
+            presentationID: PagePresentationID(revision: 2, pageIndex: 1),
+            items: [PagingPageContentItem(slot: 35, identity: AnyHashable(replacementID), title: "Replacement")],
+            isPlaceholder: false), pageCount: 2, reuseGeneration: 2)
+        fixture.pageHost.layoutSubtreeIfNeeded()
+        XCTAssertNil(renderer.liveFolderIconFrame(for: fixture.folderID, convertedTo: fixture.root))
+        XCTAssertNil(renderer.liveFolderIconFrame(for: replacementID, convertedTo: fixture.root),
+                     "A reused host must not replace committed-page ownership")
+        renderer.committedPageProvider = { 1 }
+        XCTAssertNil(renderer.liveFolderIconFrame(for: fixture.folderID, convertedTo: fixture.root))
+        XCTAssertNotNil(renderer.liveFolderIconFrame(for: replacementID, convertedTo: fixture.root))
+    }
+
+    private struct FolderIconFixture {
+        let assembly: AppCatalogAssembly
+        let root: NSView
+        let pageHost: NSView
+        let destination: NSView
+        let folderID: FolderID
+        let page: AppGridPageView
+        let cell: AppGridCellView
+    }
+
+    private func makeFolderIconFixture(flippedDestination: Bool = false) throws -> FolderIconFixture {
+        let assembly = AppCatalogAssembly(roots: [factory.root], loader: RecordingIconLoader())
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 1_600, height: 900))
+        let pageHost = NSView(frame: NSRect(x: 40, y: 50, width: 700, height: 700))
+        let destination: NSView = flippedDestination ? FolderIconFlippedHost() : NSView()
+        destination.frame = NSRect(x: 12, y: 18, width: 950, height: 820)
+        destination.bounds.origin = NSPoint(x: 17, y: 23)
+        root.addSubview(pageHost)
+        root.addSubview(destination)
+        let folderID = FolderID()
+        assembly.renderer.committedPageProvider = { 0 }
+        assembly.renderer.renderTarget = pageHost
+        assembly.renderer.render(pageIndex: 0, content: PagingPageContent(
+            presentationID: PagePresentationID(revision: 1, pageIndex: 0),
+            items: [PagingPageContentItem(slot: 0, identity: AnyHashable(folderID), title: "Group")],
+            isPlaceholder: false), pageCount: 2, reuseGeneration: 1)
+        pageHost.layoutSubtreeIfNeeded()
+        let page = try XCTUnwrap(assembly.renderer.pageView(forPage: 0))
+        let cell = try XCTUnwrap(page.cell(at: 0))
+        return FolderIconFixture(assembly: assembly, root: root, pageHost: pageHost,
+                                 destination: destination, folderID: folderID, page: page, cell: cell)
+    }
+
     func testCatalogRootOverrideUsed() throws {
         let assembly = AppCatalogAssembly(roots: [factory.root])
         XCTAssertEqual(assembly.scanRoots, [factory.root], "--catalog-root 覆盖默认根")
@@ -218,4 +495,9 @@ final class AppCatalogAssemblyTests: XCTestCase {
         }
         XCTAssertFalse(text.contains(factory.root.path), "JSONL 不得包含临时根路径")
     }
+}
+
+@MainActor
+private final class FolderIconFlippedHost: NSView {
+    override var isFlipped: Bool { true }
 }

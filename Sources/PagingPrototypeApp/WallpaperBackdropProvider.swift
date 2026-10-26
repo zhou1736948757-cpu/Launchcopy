@@ -31,13 +31,16 @@ public final class WallpaperBackdropProvider: @unchecked Sendable {
     private struct CacheKey: Hashable {
         var pixelWidth: Int
         var pixelHeight: Int
-        var blur: Int
+        var blurBits: UInt64
         var sourceDigest: String
     }
 
     private let lock = NSLock()
     private let condition = NSCondition()
     private var memory: [CacheKey: CGImage] = [:]
+    private var memoryOrder: [CacheKey] = []
+    private static let memoryCountLimit = 6
+    private static let memoryByteLimit = 48 * 1024 * 1024
     private var inflight: Set<CacheKey> = []
     private let cacheDirectory: URL
     private let writeQueue = DispatchQueue(label: "com.launchcopy.wallpaper-disk", qos: .utility)
@@ -51,17 +54,17 @@ public final class WallpaperBackdropProvider: @unchecked Sendable {
                 ?? FileManager.default.temporaryDirectory
             self.cacheDirectory = base.appendingPathComponent("LaunchcopyWallpaper", isDirectory: true)
         }
-        try? FileManager.default.createDirectory(at: self.cacheDirectory, withIntermediateDirectories: true)
     }
 
     /// Synchronous render for background queues. Returns nil → caller uses solid fallback.
-    public func blurredWallpaper(for request: Request) -> CGImage? {
-        guard let sourceURL = resolveWallpaperURL(matching: request.screenSize) else { return nil }
+    public func blurredWallpaper(for request: Request, sourceURL: URL) -> CGImage? {
         let key = makeKey(request: request, sourceURL: sourceURL)
 
         condition.lock()
         while inflight.contains(key) { condition.wait() }
         if let hit = memory[key] {
+            memoryOrder.removeAll { $0 == key }
+            memoryOrder.append(key)
             condition.unlock()
             return hit
         }
@@ -77,44 +80,52 @@ public final class WallpaperBackdropProvider: @unchecked Sendable {
 
         let diskURL = cacheDirectory.appendingPathComponent(diskName(for: key))
         if let disk = loadCGImage(url: diskURL) {
-            lock.lock(); memory[key] = disk; lock.unlock()
+            storeInMemory(disk, for: key)
             return disk
         }
 
-        guard let source = decodeThumbnail(url: sourceURL, maxPixel: 512) else { return nil }
-        let factor = LaunchcopyVisualTokens.wallpaperRenderScaleFactor
+        // Zero blur needs sharp pixels, rather than a 512px diagnostic preview.
+        let decodeSize = request.blurRadius == 0 ? 3072 : 512
+        guard let source = decodeThumbnail(url: sourceURL, maxPixel: decodeSize) else { return nil }
+        let factor = renderScaleFactor(for: request)
         let scale = request.backingScale * factor
         let blur = request.blurRadius * Double(factor)
         guard let rendered = Self.render(source, targetSize: request.screenSize, scale: scale, blurRadius: blur) else {
             return nil
         }
-        lock.lock(); memory[key] = rendered; lock.unlock()
+        storeInMemory(rendered, for: key)
         enqueueDiskWrite(rendered, to: diskURL)
         return rendered
     }
 
     public func invalidate() {
-        lock.lock(); memory.removeAll(); lock.unlock()
+        condition.lock(); memory.removeAll(); memoryOrder.removeAll(); condition.unlock()
+    }
+
+    /// Six recently used images and at most 48MiB; settings must not grow cache indefinitely.
+    private func storeInMemory(_ image: CGImage, for key: CacheKey) {
+        condition.lock(); defer { condition.unlock() }
+        memory[key] = image
+        memoryOrder.removeAll { $0 == key }
+        memoryOrder.append(key)
+        while memory.count > Self.memoryCountLimit || memory.values.reduce(0, {
+            $0 + $1.bytesPerRow * $1.height
+        }) > Self.memoryByteLimit {
+            guard !memoryOrder.isEmpty else { break }
+            memory.removeValue(forKey: memoryOrder.removeFirst())
+        }
+    }
+
+    var memoryCacheCount: Int {
+        condition.lock(); defer { condition.unlock() }
+        return memory.count
+    }
+
+    private func renderScaleFactor(for request: Request) -> CGFloat {
+        request.blurRadius == 0 ? 1 : LaunchcopyVisualTokens.wallpaperRenderScaleFactor
     }
 
     // MARK: - Resolve / decode
-
-    private func resolveWallpaperURL(matching size: CGSize) -> URL? {
-        let screens = NSScreen.screens
-        if let best = screens.min(by: {
-            sizeDistance($0.frame.size, size) < sizeDistance($1.frame.size, size)
-        }), let url = NSWorkspace.shared.desktopImageURL(for: best) {
-            return url
-        }
-        for screen in screens {
-            if let url = NSWorkspace.shared.desktopImageURL(for: screen) { return url }
-        }
-        return nil
-    }
-
-    private func sizeDistance(_ a: CGSize, _ b: CGSize) -> CGFloat {
-        abs(a.width - b.width) + abs(a.height - b.height)
-    }
 
     private func decodeThumbnail(url: URL, maxPixel: Int) -> CGImage? {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
@@ -158,13 +169,13 @@ public final class WallpaperBackdropProvider: @unchecked Sendable {
     // MARK: - Cache keys / disk
 
     private func makeKey(request: Request, sourceURL: URL) -> CacheKey {
-        let factor = LaunchcopyVisualTokens.wallpaperRenderScaleFactor
+        let factor = renderScaleFactor(for: request)
         let scale = request.backingScale * factor
         let digest = sourceDigest(for: sourceURL)
         return CacheKey(
             pixelWidth: Int(request.screenSize.width * scale),
             pixelHeight: Int(request.screenSize.height * scale),
-            blur: Int((request.blurRadius * Double(factor)).rounded()),
+            blurBits: (request.blurRadius * Double(factor)).bitPattern,
             sourceDigest: digest
         )
     }
@@ -177,7 +188,7 @@ public final class WallpaperBackdropProvider: @unchecked Sendable {
     }
 
     private func diskName(for key: CacheKey) -> String {
-        "v1-\(key.pixelWidth)x\(key.pixelHeight)-b\(key.blur)-\(key.sourceDigest.prefix(16)).png"
+        "v2-\(key.pixelWidth)x\(key.pixelHeight)-b\(String(key.blurBits, radix: 16))-\(key.sourceDigest.prefix(16)).png"
     }
 
     private func loadCGImage(url: URL) -> CGImage? {
@@ -190,12 +201,13 @@ public final class WallpaperBackdropProvider: @unchecked Sendable {
         if pendingDisk.contains(url) { lock.unlock(); return }
         pendingDisk.insert(url)
         lock.unlock()
-        writeQueue.async { [weak self] in
+        writeQueue.async { [self] in
             defer {
-                self?.lock.lock()
-                self?.pendingDisk.remove(url)
-                self?.lock.unlock()
+                lock.lock()
+                pendingDisk.remove(url)
+                lock.unlock()
             }
+            try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
             guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else { return }
             CGImageDestinationAddImage(dest, image, nil)
             CGImageDestinationFinalize(dest)

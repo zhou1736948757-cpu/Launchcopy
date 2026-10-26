@@ -42,7 +42,7 @@ final class ActivationPreferencesTests: XCTestCase {
         XCTAssertTrue(prefs.fourFingerActivationEnabled,
                       "用户决策 2026-09-05：四指默认开启（覆盖 ADR-013 §7 原锁定 false）")
         XCTAssertEqual(prefs.schemaVersion, ActivationPreferences.currentSchemaVersion)
-        XCTAssertEqual(ActivationPreferences.currentSchemaVersion, 2)
+        XCTAssertEqual(ActivationPreferences.currentSchemaVersion, 3)
         XCTAssertFalse(prefs.settings.hotCornerEnabled, "hot corner 默认 Off")
         XCTAssertNil(prefs.settings.selectedCorner)
         XCTAssertFalse(prefs.settings.globalShortcutEnabled, "global shortcut 默认 Off")
@@ -258,6 +258,7 @@ final class ActivationPreferencesTests: XCTestCase {
         let keys = Set(defaults.persistentDomain(forName: suiteName)?.keys ?? [:].keys)
         let allowed: Set<String> = ["activation.schemaVersion",
                                     "activation.fourFingerActivationEnabled",
+                                    "activation.fourFingerOutwardHideEnabled",
                                     "activation.settingsPayload"]
         XCTAssertTrue(keys.isSubset(of: allowed), "持久化 key 必须是中性白名单，实际: \(keys)")
 
@@ -311,7 +312,7 @@ final class ActivationPreferencesTests: XCTestCase {
         XCTAssertEqual(prefs.settings.selectedCorner, .topLeft)
         XCTAssertTrue(prefs.fourFingerActivationEnabled)
 
-        // 磁盘仍为 v1，直到显式 save；save 后写 v2
+        // Loading preserves v1 on disk; explicit save writes the current store schema.
         XCTAssertEqual(defaults.integer(forKey: "activation.schemaVersion"), 1)
         XCTAssertEqual(store.save(prefs), .saved)
         XCTAssertEqual(defaults.integer(forKey: "activation.schemaVersion"),
@@ -320,7 +321,7 @@ final class ActivationPreferencesTests: XCTestCase {
             return XCTFail("迁移保存后必须可加载")
         }
         XCTAssertFalse(reloaded.settings.launchAtLoginEnabled)
-        XCTAssertEqual(reloaded.schemaVersion, 2)
+        XCTAssertEqual(reloaded.schemaVersion, ActivationPreferences.currentSchemaVersion)
     }
 
     func testSchemaV2PersistsLaunchAtLoginEnabled() {
@@ -332,6 +333,6 @@ final class ActivationPreferencesTests: XCTestCase {
             return XCTFail("v2 必须 loaded")
         }
         XCTAssertTrue(loaded.settings.launchAtLoginEnabled)
-        XCTAssertEqual(loaded.schemaVersion, 2)
+        XCTAssertEqual(loaded.schemaVersion, ActivationPreferences.currentSchemaVersion)
     }
 }

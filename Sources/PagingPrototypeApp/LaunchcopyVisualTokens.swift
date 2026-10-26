@@ -38,7 +38,7 @@ public enum LaunchcopyVisualTokens {
     public static let settingsButtonInset: CGFloat = 18
     /// Wallpaper blur radius at full logical scale (provider may downscale render).
     /// 略降：过糊 + 压暗会被看成纯黑（用户实机反馈）。
-    public static let wallpaperBlurRadius: Double = 18
+    public static let wallpaperBlurRadius = Double(AppearancePreferences.defaultBlurRadius)
     /// Downscale factor for blur renders (digest: heavy blur hides detail).
     public static let wallpaperRenderScaleFactor: CGFloat = 0.35
 
@@ -49,7 +49,8 @@ public enum LaunchcopyVisualTokens {
 
     public static func chromeFill(policy: LaunchcopyMaterialPolicy) -> NSColor {
         if policy.prefersOpaqueChrome {
-            return NSColor.black.withAlphaComponent(0.55)
+            // Fully opaque dark chrome keeps the existing white symbol legible.
+            return NSColor(calibratedWhite: 0.12, alpha: 1)
         }
         return NSColor.black.withAlphaComponent(0.32)
     }

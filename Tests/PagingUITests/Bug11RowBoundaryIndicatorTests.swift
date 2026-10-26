@@ -372,7 +372,15 @@ final class Bug11RowBoundaryIndicatorTests: XCTestCase {
     func testTopLevelTargetUsesAnnotatedPageAndCrossRowAnchor() {
         let (_, visuals) = makeVisuals()
         let topLevel = makeFrames(annotation: (page: 1, itemsPerPage: 35))
-        let members = makeFrames()
+        // 成员行带必须与顶层落点 Y 分离：行带优先契约下，重叠 Y 会强制 insertion。
+        // 把成员放到远离顶层行的 y 带（例如 y=40），指针落在顶层行（496/392）才是 move-out。
+        let members = [
+            DragItemFrame(identity: .app(.bundleID("fixture.bug11-member0")),
+                          frame: DragRect(x: 24, y: 40, width: frameWidth, height: frameHeight)),
+            DragItemFrame(identity: .app(.bundleID("fixture.bug11-member1")),
+                          frame: DragRect(x: 24 + columnPitch, y: 40,
+                                          width: frameWidth, height: frameHeight)),
+        ]
         let folderID = FolderID(uuid: UUID(uuidString: "00000000-0000-0000-0000-000000000011")!)
         let source = DragSourceIdentity.folderMember(
             folderID: folderID,
@@ -405,6 +413,25 @@ final class Bug11RowBoundaryIndicatorTests: XCTestCase {
         visuals.updateIntent(.topLevelTarget(index: 40), geometry: geometry,
                              pointer: nextPointer)
         assertBar(visuals, x: 20, y: 392, height: 88)
+    }
+
+    /// 回归：成员行带内即使 moveOutArmed 且水平越界，仍保持 insertion（防贴边误解散）。
+    func testFolderMemberInsideRowBandStaysInsertionEvenWhenArmed() {
+        let topLevel = makeFrames(annotation: (page: 1, itemsPerPage: 35))
+        // 成员与顶层共享首行 Y → 指针在该行带内不得升级为 topLevelTarget。
+        let members = Array(makeFrames(rowCounts: [2]).prefix(2))
+        let folderID = FolderID(uuid: UUID(uuidString: "00000000-0000-0000-0000-000000000012")!)
+        let source = DragSourceIdentity.folderMember(
+            folderID: folderID,
+            app: .bundleID("fixture.bug11-source"))
+        let zones = DropZones(itemFrames: members,
+                              topLevelFrames: topLevel,
+                              moveOutArmed: true,
+                              marginPT: 8)
+        let pointer = DragPoint(x: 530, y: 540)
+        XCTAssertEqual(DropZoneClassifier.classify(pointer: pointer, source: source, zones: zones),
+                       .insertion(index: 2),
+                       "成员行带内必须 insertion，不能因水平越界直接 move-out")
     }
 
     // MARK: - y-down mirror and tie rule

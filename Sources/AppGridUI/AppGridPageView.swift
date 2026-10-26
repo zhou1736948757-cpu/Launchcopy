@@ -4,7 +4,7 @@
 // 真实网格渲染：
 // - app 名：NSTextField 同步文本（render 内直接写，绝不显示旧名）；
 // - 运行时图标：IconPipeline 异步请求，七字段 ItemBindingToken 门控写回（§6.4）；
-// - 复用：clearForReuse/render 先清空全部 cell（名/图标/token）→ 新内容 → 图标到达；
+// - Reuse clears every cell; an admitted main-page reorder restores ready icons only after rebinding.
 //   在途异步绑定被 surfaceGeneration bump 作废（stale apply 不落任何 cell）；
 // - 失败结果 → 中性 placeholder 保持；teardown 后零 UI 写回；
 // - 无障碍：页标签 + cell 完整名称（§9）。
@@ -16,6 +16,7 @@ import AppCatalogCore
 import AppIconPipeline
 import AppKit
 import PagingUI
+import LauncherLocalization
 
 /// 图标异步 apply 结果（观察/telemetry 用；无字节/哈希/路径/身份原文）。
 public enum AppGridIconApplyResult: Equatable, Sendable {
@@ -29,7 +30,6 @@ public enum AppGridIconApplyResult: Equatable, Sendable {
 /// 单个页面的真实内容渲染器（PagingPageRendering；由装配层注入 PagingSurface）。
 public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Sendable {
 
-    private static let columns = 5
     private static let spacing: CGFloat = 16
     private static let pageLabelHeight: CGFloat = 28
 
@@ -45,6 +45,34 @@ public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Send
     public private(set) var staleIconApplyCount = 0
     /// 是否已 teardown（此后零 UI 写回）。
     public private(set) var isTornDown = false
+    public var layoutMode: AppGridLayoutMode = .ordinary
+    /// Main-grid metrics only. Rebinding and admission belong to the app owner;
+    /// the independent folder overlay never reads this configuration.
+    public var gridCapacity: MainGridCapacity = .default {
+        didSet {
+            guard gridCapacity != oldValue else { return }
+            needsLayout = true
+        }
+    }
+    /// Updates live and retained cells without rendering or requesting icons.
+    public var itemAppearance: GridItemAppearance = .default {
+        didSet {
+            guard itemAppearance.isValid else {
+                itemAppearance = oldValue
+                return
+            }
+            guard itemAppearance != oldValue else { return }
+            for cell in cells { cell.itemAppearance = itemAppearance }
+            needsLayout = true
+        }
+    }
+    /// Applies caption visibility without rendering, rebinding or invalidating icon results.
+    public var showsAppLabels: Bool = true {
+        didSet {
+            guard showsAppLabels != oldValue else { return }
+            for cell in cells { cell.showsAppLabels = showsAppLabels }
+        }
+    }
 
     /// 观察钩子（测试 + telemetry 合成 icon_async_state 用）。
     /// 注意：设置方须弱捕获本视图（本视图不持有钩子；teardown 后回调仍可达，用于观测）。
@@ -57,6 +85,14 @@ public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Send
     /// 文件夹点击回调透传（T-1E-folder-open-repair-wiring；装配层注入）。
     /// 仅 folder cell 触发（AppGridCellView.onFolderClick）；nil = 无回调 → folder cell 点击 no-op。
     public var onFolderClick: ((FolderID) -> Void)?
+
+    /// Updates menu consumers without rebinding, requesting icons or changing generations.
+    /// Application owners should use weak captures when installing their factory.
+    public var appContextMenuProvider: ((AppGridCellView) -> NSMenu?)? {
+        didSet {
+            for cell in cells { connectContextMenu(to: cell) }
+        }
+    }
 
     /// 当前 cell 数（测试/诊断）。
     public var cellCount: Int { cells.count }
@@ -90,7 +126,13 @@ public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Send
             }
             guard let appID = token.appID as? AppID,
                   let record = catalog?.records.first(where: { $0.id == appID }) else { return nil }
-            return DragItemFrame(identity: .app(PersistentAppReference.from(record: record)), frame: rect)
+            // Ordering still uses the entire cell. Grouping follows the visible icon,
+            // which may be offset from the cell center by captions and responsive sizing.
+            let icon = cell.iconView.convert(cell.iconView.bounds, to: host)
+            let grouping = DragRect(x: Double(icon.minX), y: Double(icon.minY),
+                                    width: Double(icon.width), height: Double(icon.height))
+            return DragItemFrame(identity: .app(PersistentAppReference.from(record: record)),
+                                 frame: rect, appGroupingFrame: grouping)
         }
     }
 
@@ -98,7 +140,50 @@ public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Send
     private let iconPointSize: Double
     private let displayScale: Double
     private var cells: [AppGridCellView] = []
+    // Expected outgoing bindings, not an image cache. Only render may author this ledger.
+    private var renderedBindings: [ItemBindingToken] = []
+    private var renderedLayoutMode: AppGridLayoutMode?
+    private var renderedGridCapacity: MainGridCapacity?
     private let pageLabel = NSTextField(labelWithString: "")
+    private var displayedStrings: LocalizedStrings?
+    private var textPageCount = 0
+    private var textUpdateGeneration: UInt64 = 0
+    private var textUpdateScheduled = false
+    internal private(set) var languageFormattingCount = 0
+
+    /// Updates retained cells and page chrome without render, binding or icon requests.
+    public func relabel(strings: LocalizedStrings) {
+        guard !isTornDown else { return }
+        displayedStrings = strings
+        for cell in cells { cell.relabel(strings: strings) }
+        queuePageText()
+    }
+
+    private func invalidatePendingText() {
+        textUpdateGeneration &+= 1
+        textUpdateScheduled = false
+    }
+
+    private func queuePageText() {
+        guard !textUpdateScheduled else { return }
+        textUpdateScheduled = true
+        let generation = textUpdateGeneration
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isTornDown, generation == self.textUpdateGeneration else { return }
+            self.textUpdateScheduled = false
+            self.updatePageText()
+        }
+    }
+
+    private func updatePageText() {
+        guard pageIndex >= 0, !isTornDown else { return }
+        languageFormattingCount += 1
+        let text = displayedStrings?.page(pageIndex + 1, total: textPageCount)
+            ?? "Page \(pageIndex + 1) of \(textPageCount)"
+        pageLabel.stringValue = text
+        pageLabelText = text
+        setAccessibilityLabel(text)
+    }
 
     public init(iconPipeline: IconPipeline, iconPointSize: Double = 48, displayScale: Double = 2) {
         self.pipeline = iconPipeline
@@ -114,6 +199,8 @@ public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Send
         pageLabel.textColor = .white.withAlphaComponent(0.9)
         pageLabel.alignment = .center
         pageLabel.lineBreakMode = .byTruncatingTail
+        // Keep page diagnostics/accessibility without decorative text over search.
+        pageLabel.isHidden = true
         addSubview(pageLabel)
         setAccessibilityRole(.group)
     }
@@ -131,14 +218,27 @@ public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Send
     /// 渲染一页内容：render 前必须已清空（复用路径由 clearForReuse 保证）。
     /// 同步写 app 名；异步请求图标（generation 门控写回）。
     public func render(pageIndex: Int, content: PagingPageContent, pageCount: Int, reuseGeneration: UInt64) {
+        render(pageIndex: pageIndex, content: content, pageCount: pageCount,
+               reuseGeneration: reuseGeneration, retainingReadyIconsForReorder: false)
+    }
+
+    /// The main renderer may admit continuity only for its existing attached page/host pair.
+    /// Images live in this synchronous transaction; all cells still clear, rebind and request.
+    public func render(pageIndex: Int, content: PagingPageContent, pageCount: Int,
+                       reuseGeneration: UInt64, retainingReadyIconsForReorder: Bool) {
         guard !isTornDown else { return }
+        let retained = retainingReadyIconsForReorder
+            ? readyIconsForReorder(pageIndex: pageIndex, content: content, reuseGeneration: reuseGeneration)
+            : [:]
+        renderedBindings.removeAll(keepingCapacity: true)
+        renderedLayoutMode = layoutMode
+        renderedGridCapacity = gridCapacity
         surfaceGeneration &+= 1
         self.pageIndex = pageIndex
         self.presentationID = content.presentationID
         self.reuseGeneration = reuseGeneration
-        pageLabel.stringValue = "Page \(pageIndex + 1) of \(pageCount)"
-        pageLabelText = pageLabel.stringValue
-        setAccessibilityLabel("Page \(pageIndex + 1) of \(pageCount)")
+        textPageCount = pageCount
+        queuePageText()
 
         guard !content.isPlaceholder else {
             clearCells()
@@ -158,6 +258,7 @@ public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Send
                 iconKey: iconKey(for: identity),
                 surfaceGeneration: surfaceGeneration
             )
+            renderedBindings.append(token)
             if let folderID = identity as? FolderID {
                 // folder cell：中性符号 + 标题 + 成员计数；绝不请求 app 图标（iconKey 为 nil）。
                 let memberCount = folderSnapshotProvider?()?.entry(for: folderID)?.members.count ?? 0
@@ -165,6 +266,9 @@ public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Send
             } else {
                 cells[index].bind(name: item.title, token: token)
                 if let key = token.iconKey {
+                    if let appID = identity as? AppID, let ready = retained[appID], ready.key == key {
+                        cells[index].applyIconIfValid(ready.image, token: token)
+                    }
                     requestIcon(key: key, token: token, cellIndex: index)
                 }
             }
@@ -175,6 +279,10 @@ public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Send
     /// 进入复用池前清理：generation bump 作废全部在途异步绑定；清空全部 cell（名/图标/token）。
     public func clearForReuse() {
         guard !isTornDown else { return }
+        renderedBindings.removeAll()
+        renderedLayoutMode = nil
+        renderedGridCapacity = nil
+        invalidatePendingText()
         surfaceGeneration &+= 1
         pageIndex = -1
         presentationID = nil
@@ -190,11 +298,18 @@ public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Send
     public func teardown() {
         guard !isTornDown else { return }
         isTornDown = true
+        renderedBindings.removeAll()
+        renderedLayoutMode = nil
+        renderedGridCapacity = nil
+        invalidatePendingText()
         surfaceGeneration &+= 1
         pageIndex = -1
         presentationID = nil
         reuseGeneration = 0
-        for cell in cells { cell.removeFromSuperview() }
+        for cell in cells {
+            cell.invalidatePendingText()
+            cell.removeFromSuperview()
+        }
         cells.removeAll()
         pageLabel.stringValue = ""
         pageLabelText = ""
@@ -202,6 +317,41 @@ public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Send
     }
 
     // MARK: - 内部
+
+    private struct ReadyReorderIcon {
+        let key: IconKey
+        let image: NSImage
+    }
+
+    private func readyIconsForReorder(pageIndex: Int, content: PagingPageContent,
+                                      reuseGeneration: UInt64) -> [AppID: ReadyReorderIcon] {
+        guard superview != nil, !content.isPlaceholder,
+              self.pageIndex == pageIndex, content.presentationID.pageIndex == pageIndex,
+              presentationID == content.presentationID, self.reuseGeneration == reuseGeneration,
+              renderedLayoutMode == .ordinary, layoutMode == .ordinary,
+              renderedGridCapacity == gridCapacity, renderedBindings.count == cells.count else { return [:] }
+        let previousIDs = renderedBindings.compactMap(\.appID)
+        let nextIDs = content.items.compactMap(\.identity)
+        // Pure same-page permutations (including a repeated refresh) only. New members,
+        // cross-page moves, duplicates and nil identities take the ordinary request path.
+        guard previousIDs.count == renderedBindings.count, nextIDs.count == content.items.count,
+              Set(previousIDs).count == previousIDs.count, Set(nextIDs).count == nextIDs.count,
+              Set(previousIDs) == Set(nextIDs) else { return [:] }
+        var ready: [AppID: ReadyReorderIcon] = [:]
+        for (index, expected) in renderedBindings.enumerated() {
+            let cell = cells[index]
+            guard cell.superview === self, !cell.isFolderCell,
+                  cell.bindingToken == expected,
+                  expected.catalogRevision == presentationID?.revision,
+                  expected.pageIdentity == presentationID,
+                  expected.reuseGeneration == self.reuseGeneration,
+                  expected.surfaceGeneration == surfaceGeneration,
+                  let appID = expected.appID as? AppID, let key = expected.iconKey,
+                  key == iconKey(for: expected.appID), let image = cell.iconView.image else { continue }
+            ready[appID] = ReadyReorderIcon(key: key, image: image)
+        }
+        return ready
+    }
 
     /// 身份 → IconKey（IconIdentity 不透明；不含 bundle ID 原文/路径/哈希）。
     private func iconKey(for identity: AnyHashable?) -> IconKey? {
@@ -215,23 +365,42 @@ public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Send
     /// 含池化复用页 —— 与 folderSnapshotProvider 同源透传）。
     private func prepareCells(count: Int) {
         if cells.count != count {
-            for cell in cells { cell.removeFromSuperview() }
+            for cell in cells {
+                cell.invalidatePendingText()
+                cell.removeFromSuperview()
+            }
             cells = (0..<count).map { _ in
                 let cell = AppGridCellView()
+                cell.contentLayoutContext = .mainGrid
+                if let displayedStrings { cell.relabel(strings: displayedStrings) }
+                cell.itemAppearance = itemAppearance
+                cell.showsAppLabels = showsAppLabels
                 cell.onFolderClick = onFolderClick
+                connectContextMenu(to: cell)
                 addSubview(cell)
                 return cell
             }
         } else {
             for cell in cells {
                 cell.clearContent()
+                cell.contentLayoutContext = .mainGrid
+                cell.itemAppearance = itemAppearance
+                cell.showsAppLabels = showsAppLabels
                 cell.onFolderClick = onFolderClick
+                connectContextMenu(to: cell)
             }
         }
     }
 
     private func clearCells() {
         for cell in cells { cell.clearContent() }
+    }
+
+    private func connectContextMenu(to cell: AppGridCellView) {
+        cell.appContextMenuProvider = { [weak self] cell in
+            guard let self, !self.isTornDown else { return nil }
+            return self.appContextMenuProvider?(cell)
+        }
     }
 
     private func requestIcon(key: IconKey, token: ItemBindingToken, cellIndex: Int) {
@@ -281,30 +450,13 @@ public final class AppGridPageView: NSView, PagingPageRendering, @unchecked Send
         pageLabel.frame = CGRect(x: 0, y: max(height - Self.pageLabelHeight - 24, 0),
                                  width: width, height: Self.pageLabelHeight)
 
-        let inset: CGFloat = 24
-        let topInset: CGFloat = 96
-        let columns = Self.columns
-        let spacing = Self.spacing
-        let cellHeight: CGFloat = 88
-        let area = CGRect(
-            x: inset, y: inset,
-            width: max(width - inset * 2, 0), height: max(height - topInset - inset, 0)
-        )
-        guard area.width > 0, area.height > 0, !cells.isEmpty else { return }
-        let tileWidth = (area.width - CGFloat(columns - 1) * spacing) / CGFloat(columns)
+        let geometry = MainGridLayoutMetrics.geometry(bounds: bounds, itemCount: cells.count,
+            mode: layoutMode, capacity: gridCapacity, appearance: itemAppearance,
+            preferredSpacing: Self.spacing)
+        guard !cells.isEmpty else { return }
         let total = cells.count
         for (index, cell) in cells.enumerated() {
-            let column = index % columns
-            let row = index / columns
-            // T-1D：行内水平居中 —— 搜索结果/部分页末行不足 columns 时，整行在网格区域内居中
-            // （单结果/少量结果不再被挤到左侧）。满行（= columns）行宽恰等于 area.width，
-            // 行起始偏移为 0，几何与全页布局完全一致（零回归）。
-            let colsInThisRow = min(columns, total - row * columns)
-            let rowContentWidth = CGFloat(colsInThisRow) * tileWidth + CGFloat(colsInThisRow - 1) * spacing
-            let rowStartX = area.minX + (area.width - rowContentWidth) / 2
-            let x = rowStartX + CGFloat(column) * (tileWidth + spacing)
-            let y = area.maxY - CGFloat(row + 1) * (cellHeight + spacing)
-            cell.frame = CGRect(x: x, y: y, width: tileWidth, height: cellHeight)
+            if let frame = geometry.frame(for: index, itemCount: total) { cell.frame = frame }
         }
     }
 

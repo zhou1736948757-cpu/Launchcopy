@@ -665,12 +665,18 @@ final class PinchRecognizerTests: XCTestCase {
         XCTAssertEqual(fired.count, 1)
     }
 
-    func testP17EventTypeIsShowOnly() {
-        // 编译期保证：PinchEvent 只有 .showRequested 一个 case（无 hide 事件）。
-        let event: PinchEvent = .showRequested(token: PinchEventToken(generation: 0, sessionID: PinchSessionID(rawValue: 1)))
-        switch event {
-        case .showRequested:
-            break
+    func testP17DefaultModeEmitsOnlyShowEvents() {
+        // The optional Hide case does not change the inward-only default contract.
+        let clock = FakePinchClock()
+        var recognizer = makeRecognizer(clock: clock)
+        XCTAssertFalse(recognizer.outwardHideEnabled)
+        let events = runStandardPinch(&recognizer, clock, device: device)
+        XCTAssertEqual(events.count, 1)
+        for event in events {
+            switch event {
+            case .showRequested: break
+            case .hideRequested: XCTFail("Default inward-only mode emitted Hide")
+            }
         }
     }
 

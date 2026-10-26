@@ -122,24 +122,31 @@ final class PagingSurfaceTests: XCTestCase {
 
     // MARK: - 当前页可访问性描述更新
 
-    func testAccessibilityDescriptionUpdatesOnCommit() {
+    @MainActor
+    func testAccessibilityDescriptionUpdatesOnCommit() async {
         let surface = makeSurface(pageCount: 5)
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(surface.accessibilityDescription, "Page 1 of 5")
 
         flingForwardOnce(surface)
         XCTAssertEqual(surface.core.committedPage, 1)
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(surface.accessibilityDescription, "Page 2 of 5")
     }
 
-    func testAccessibilityDescriptionTracksTrackingAndSettleTarget() {
+    @MainActor
+    func testAccessibilityDescriptionTracksTrackingAndSettleTarget() async {
         let surface = makeSurface(pageCount: 5)
         gestureBegan(surface, at: 0)
         gestureChanged(surface, deltaX: 900, at: 0.1) // 甩过中点
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(surface.accessibilityDescription, "Page 2 of 5") // tracking：round(offset)
         gestureEnded(surface, at: 0.1)
         finishPendingGesture(surface, at: 0.1)
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(surface.accessibilityDescription, "Page 2 of 5") // settling：提议目标页
         settleFrames(surface)
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(surface.accessibilityDescription, "Page 2 of 5")
     }
 
@@ -169,7 +176,8 @@ final class PagingSurfaceTests: XCTestCase {
 
     // MARK: - pageCount 变化后页码合法（§3.I）
 
-    func testPageCountReductionKeepsPageNumbersValid() {
+    @MainActor
+    func testPageCountReductionKeepsPageNumbersValid() async {
         let surface = makeSurface(pageCount: 5)
         flingForwardOnce(surface) // → page 1
         flingForwardOnce(surface, at: 10) // → page 2
@@ -180,9 +188,11 @@ final class PagingSurfaceTests: XCTestCase {
         for index in 0..<2 {
             let host = surface.hostForPage(index)
             XCTAssertNotNil(host)
+            await drainDeferredPresentationTurns()
             XCTAssertEqual(host?.accessibilityLabel() as? String, "Page \(index + 1) of 2")
         }
         XCTAssertNil(surface.hostForPage(2), "越界页不得存在")
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(surface.accessibilityDescription, "Page 2 of 2")
     }
 
@@ -229,8 +239,10 @@ final class PagingSurfaceTests: XCTestCase {
 
     // MARK: - §3.I 页面内容正确性
 
-    func testPageContentNeverStale() {
+    @MainActor
+    func testPageContentNeverStale() async {
         let surface = makeSurface(pageCount: 20, itemsPerPage: 8)
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(surface.hostForPage(1)?.accessibilityLabel() as? String, "Page 2 of 20")
 
         // 翻走 6 页（page 1 出范围 → 回收），再翻回。
@@ -242,6 +254,7 @@ final class PagingSurfaceTests: XCTestCase {
         XCTAssertEqual(surface.core.committedPage, 1)
         let host = surface.hostForPage(1)
         XCTAssertNotNil(host)
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(host?.accessibilityLabel() as? String, "Page 2 of 20", "复用后内容正确，无旧内容残留")
         XCTAssertEqual(host?.preparedItemsPerPage, 8)
     }

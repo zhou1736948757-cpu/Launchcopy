@@ -16,6 +16,9 @@
 //    --momentum-overshoot <0.05–1.0> momentum 过冲钳制（页；默认 0.20；T-worker-b-overshoot2）
 //    --fullscreen                以全屏 Space 启动（默认窗口形态；T-worker-b-fullscreen 第 10 轮
 //                                全屏为调参基准）
+//    --ui-test-windowed          Opt-in background test window; overrides --fullscreen.
+//    --ui-test-profile <id>      Isolated candidate-local storage; requires --ui-test-windowed.
+//                                ID: [a-z0-9][a-z0-9-]{0,47}; invalid input must reject startup.
 //    --catalog-root <path>       Phase 1B：覆盖默认 4 个受限扫描根（可多次；缺省 =
 //                                CatalogRoots.defaults；测试/演示用临时目录）
 //    --neutral-content           Phase 1B 回归模式：强制 Phase 1A 中性 placeholder
@@ -44,6 +47,7 @@
 //
 //  约定：参数错误 → 返回 .failure（调用方打印帮助后继续正常启动，绝不崩溃；
 //         momentum 调参参数非法除外：必须显式失败 exit 2，不静默回退默认值）。
+//  UI test profile errors must also reject startup; production storage is never a fallback.
 //
 
 import Foundation
@@ -92,6 +96,14 @@ public enum AppArguments {
         public var momentumOvershoot: Double?
         /// --fullscreen（T-worker-b-fullscreen：全屏 Space 启动，默认 false = 窗口形态）。
         public var fullscreen: Bool
+        /// Opt-in test window: no screen cover, cross-Space presence or activation.
+        public var uiTestWindowed: Bool = false
+        /// Optional isolated storage profile. Valid only with --ui-test-windowed.
+        public var uiTestProfile: String? = nil
+        /// Assigned only by the dedicated bundle-entry resolver; never a CLI option.
+        var gestureValidation: Bool = false
+        /// Strict bundle-only integrated preview; isolated writes, real catalog and touch.
+        var integratedPreview: Bool = false
         /// Phase 1B：--catalog-root 覆盖的扫描根（可多次；空 = 使用 CatalogRoots.defaults）。
         public var catalogRoots: [URL]
         /// Phase 1B：--neutral-content 回归模式（强制 Phase 1A 中性 placeholder）。
@@ -153,6 +165,9 @@ public enum AppArguments {
         case invalidMomentumOvershoot(String)
         case invalidFrameDriver(String)
         case invalidFrameTimerTolerance(String)
+        case invalidUITestProfile
+        case uiTestProfileRequiresWindowed
+        case duplicateUITestProfile
         case telemetry(TelemetryArguments.ParseError)
     }
 
@@ -248,6 +263,24 @@ public enum AppArguments {
             case "--fullscreen":
                 options.fullscreen = true
 
+            case "--ui-test-windowed":
+                options.uiTestWindowed = true
+
+            case "--ui-test-profile":
+                guard options.uiTestProfile == nil else {
+                    return .failure(.duplicateUITestProfile)
+                }
+                guard index + 1 < arguments.count,
+                      !arguments[index + 1].hasPrefix("--") else {
+                    return .failure(.missingValue(argument))
+                }
+                let id = arguments[index + 1]
+                guard UITestProfile.isValidID(id) else {
+                    return .failure(.invalidUITestProfile)
+                }
+                options.uiTestProfile = id
+                index += 1
+
             case "--catalog-root":
                 guard index + 1 < arguments.count else { return .failure(.missingValue(argument)) }
                 let raw = arguments[index + 1]
@@ -305,6 +338,9 @@ public enum AppArguments {
             }
             index += 1
         }
+        guard options.uiTestProfile == nil || options.uiTestWindowed else {
+            return .failure(.uiTestProfileRequiresWindowed)
+        }
         return .success(options)
     }
 
@@ -325,6 +361,10 @@ public enum AppArguments {
                                         越界报错退出）
           --momentum-overshoot <0.05–1.0>  momentum 过冲钳制（页；默认 0.20，越界报错退出）
           --fullscreen                 以全屏 Space 启动（默认窗口形态；全屏为调参基准）
+          --ui-test-windowed            普通后台测试窗口；不跨桌面、不抢焦点，优先于 --fullscreen
+          --ui-test-profile <id>        隔离候选测试数据；必须同时指定 --ui-test-windowed
+                                      ID: [a-z0-9][a-z0-9-]{0,47}（1–48 个 ASCII 字符）
+                                      仅接受 .build/candidates 下的 .app；非法输入报错退出，绝不回退生产存储
           --catalog-root <path>        Phase 1B：覆盖默认 4 个受限扫描根（可多次；缺省 =
                                       CatalogRoots.defaults；测试/演示用临时目录）
           --neutral-content            Phase 1B 回归模式：强制 Phase 1A 中性 placeholder

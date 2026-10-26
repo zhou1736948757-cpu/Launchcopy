@@ -93,7 +93,10 @@ final class T1FD1FixUITests: XCTestCase {
         XCTAssertEqual(coordinator.controller.state, .dragging)
         XCTAssertTrue(coordinator.visuals.isPreviewVisible)
         XCTAssertEqual(coordinator.visuals.previewNameText, "app1", "preview 显示源 cell 名称")
-        XCTAssertTrue(coordinator.visuals.previewIconImage === icon, "preview 显示源 cell 图标")
+        // preview 使用 snapshot/durable 拷贝，不要求与源 NSImage 引用相同（===）。
+        XCTAssertNotNil(coordinator.visuals.previewIconImage, "preview 显示源 cell 图标（耐久拷贝）")
+        XCTAssertGreaterThan(coordinator.visuals.previewIconImage?.size.width ?? 0, 0)
+        XCTAssertEqual(icon.size.width, 32, "源 fixture 图标仍注入 cell 供 snapshot")
         XCTAssertEqual(coordinator.visuals.previewFrame.size, NSSize(width: 96, height: 88),
                        "preview 为 cell 比例迷你块")
 
@@ -127,8 +130,9 @@ final class T1FD1FixUITests: XCTestCase {
 
         coordinator.pointerDown(locationInWindow: NSPoint(x: 40, y: 40), sourceCell: cell, memberFolderID: nil)
         XCTAssertEqual(coordinator.controller.state, .idle, "stale source 不进入 pressed")
-        XCTAssertFalse(coordinator.isSessionActive)
+        XCTAssertTrue(coordinator.isSessionActive, "The stale click still owns a held physical pointer")
         coordinator.pointerUp(locationInWindow: NSPoint(x: 40, y: 40))
+        XCTAssertFalse(coordinator.isSessionActive)
         XCTAssertEqual(clicks.count, 1, "stale-source 点击回退派发 onCellClick")
         if let first = clicks.first {
             XCTAssertTrue(first === cell)

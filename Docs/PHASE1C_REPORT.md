@@ -69,3 +69,7 @@
 **生效条件**:已满足。后续若发现回归，按 Review/Repair 循环另立任务；不回溯改写本次用户验收记录。
 
 **不适用项**:无环境/来源阻塞(环境齐备、来源纪律登记)。
+
+---
+
+**Dated correction — 2026-09-16 (D-1J-HIT-REGION-REVERT):** T-1C-D-blankclick-repair 行内「cell/icon/label→`super.sendEvent` 透传」为整格命中期表述。现行契约为 **icon±4pt**：label/格内 padding 点击判空白 → 退出；仅 icon±4 内命中透传启动链。`QuitOnBlankClickWindow` 架构与 `blankClickResolvesToCell` 判定入口未变，仅其内部 `acceptsLaunchHit` 契约在 Phase 1J r1 FAIL 后恢复 icon±4。

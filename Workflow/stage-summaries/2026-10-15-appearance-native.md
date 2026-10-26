@@ -1,0 +1,39 @@
+# Exact-candidate appearance native acceptance — 2026-10-15
+
+## Objective / baseline / classification
+Previous goal turn PROGRESS: Library/grid status fix with2651/0, scoped source review and supported native no-results/Back checks. Full independent reference-experience parity remains ACTIVE/incomplete. Current451 input hashes and exact42bc2e9d... candidate match; no own executable PID. No new source change or fresh tests claimed. The missing gate is actual appearance controls/Apply/discard/default draft and process restart, not another feature.
+
+## Approved contract
+Use current scalar appearance contract: showlabels defaulttrue, preferredicon48pt range32–64, font11pt range9–16, blur18 range0–60; auto-fit remains within existing5x7 grid. Persistence only explicitApply; closing discards draft; RestoreDefaults changes draft only and requiresApply. No activation/layout changes. Hide labels keeps AX names and folder title editor; blur0 remains wallpaper not black. Slider ticks have no committed work, safe owner defers ongoing input. Capacity/rows/columns contract still unapproved, not part of this acceptance.
+
+## Plan / ownership / concurrency
+Main-only supported native interaction, single desktop input session. No worker/reviewer needed while source is unchanged; existing scoped source reviews remain historical code evidence, Main native observations separate. No test/build process during native session, no new source/spec/interface implementation unless a concrete defect is reproduced and stage explicitly updated. Preserve current manifest/hash/profile; bind exact candidate/process.
+
+1. Read normal Appearance tab defaults, controls/ranges and visible labels.
+2. Change a draft without Apply; close/reopen and verify committed values return, grid unchanged.
+3. Apply representative extremes using actual controls; verify acknowledgement and grid/folder view changes, retained fullAX names, no overlap, wallpaper state/visible image separately. Do not infer actualpoint dimensions from a screenshot alone.
+4. RestoreDefaults -> draftonly; close/reopen confirms previous committed values, then apply defaults if needed. Keep meaningful nondefault accepted settings for normalQuit/verifiedabsence/samecandidate restart and read controls/visual state again.
+5. Leave the owned test profile in documented state, normalQuit/exactprocessabsence. Do not query native state afterfinalQuit.
+
+## Safety / evidence boundary
+Use only existing isolated ordinary non-topmost LaunchcopyUITest.app under library-status-visibility candidate. User allowed own test data and normalownQuit; no formal app/profile, install/sign/commit/reset/cleanup/processkill, OSappearance/input/Space change, reference source/assets or unrelatedapp control. Forty owned Info-only bundles are not executable launch evidence. Sliders/checkbox/settings are app-local; input timing may activate this ordinary testwindow, never full-screen/always-on-top.
+
+AX values, native control actions, screenshots, process/hash/source and acknowledgement each recorded separately; screenshots inline, not rawsavedfiles unless actual supported path available. RealIME/VoiceOver/hide/drag safe-boundary/physical60HzAB/120Hz/multidisplay/powerloss remain independent. No newbuild/test/runtimePASS from unchanged code or guessedpixels. If UI lacks access or controls fail, preserve actual error and diagnose proportionally rather than bypassing authority.
+
+## Reproduced existing-contract defect / maintenance scope
+Actual42bc... candidate defaultsOn/18/48/11. NativeAX controls setdraftOff/0/64/16 withcheckboxaction; noApply. Nativeclose ->grid stillshowsnames (notcommitted), reopen ->sameOff/0/64/16draftretained. This violates explicitappearanceclose-discard contract. NormalownQuit PID38123 verifiedexactprocessabsent; no nativequeryafterquit. NativebeforeJSON retained. Source: language-era preservesInterfaceDraftsOnReopen=true skipsreconfigure onretainedcontroller; hideSettings discardslanguage only. Keep thatpreserve behavior for visible reentry/languagerelabel, not close.
+
+Bounded repair approved by existing smallbugscope: internal appearance draft-discard callback, wired by existing AppDelegate.configureAppearanceSettings to currentcoordinator accepted snapshot and loadresult, identity/finalteardownguarded; actual controllerhide/close invokes it. No persist/apply/runtime-view changes duringdiscard, no reloadofactivation/sources/alias/Library, no broaderlayout/APIcontract. Main owns AppDelegate/AppearanceSettingsView/ActivationSettingsWindowController +newintegrationtests. FirstactualcompositionRED; one read-onlyreviewer onlyafterstablepatch, parallelMainserialSwift/build/package, max2includingMain. Existing UI-onlyplan superseded byreproduceddefect, not inventingfeature. No code implementationbeforeRED.
+
+## RED and minimal implementation
+Mainclose-red4XCTest/6assertfailures throughactualAppDelegateconfiguration andnativecontrollerclose/hide. Added one internal viewdiscard callback, invoked by existinghideSettings afterorderOut andwiredbyexistingconfigureAppearanceSettings tocurrentcoordinator acceptedprefs/loadresult. Callbackweakcaptures/exactcoordinator+viewidentity/finalteardownguards; reloadonlycontrols, no saving/applying/displayedstate-reset. Acceptedqueuedprefs retained ratherthanoldpresentedprefs. Language/visible-reentry preserveflag untouched. Added2regressions forotherdraftisolation andretainedoldviewcallback. Nextfocused6new +existingappearance/language/settings suites.
+
+## Stable source/focused/reviewer wave
+Mainfocused63XCTest/0fail,4.140s:6newcloseintegration +appearance/preferences/rendering/languageruntime/reentry regressions. Final452inputs frozen,4changed/newfiles (3app-targetsources,newtest), all18Core/UI andresources unchanged. In-memory removalofexactsmallhunks recoveredall3priorproductionSHA (close-delta-proof.json). Currentcoordinatoraccepted/loadresult suppliedonclose, no I/O/save/viewapply; preserveflag remainsforvisible-reentry/languagerelabel. Mainserialfull/debug/releasepackage next, one independentreport-onlyreviewer onstablefreeze (no tests/build/UI), max2includingMain. Previousagentsclosed; ownnativeappclosed beforeSwiftjobs.
+
+## Final code/review/package and actual native checkpoint
+Main63focused/2657full0fail, Debug/Release/package, strict288-key3language positive/two negative probes passed; all452 frozen inputs verified after native work. Independent Sagan bounded SOURCEPASS, zero independent executions; reviewer closed, Main jobs terminal. Exact source hashes and reversal retained in evidence/review. Latest unsigned uninstalled candidate appearance-close-rc-20261015-r1, exeSHA4e1af930a30b64eec66da7e8d21fb17a8af5fa89f79c18a4318b788b6a4e7fa9.
+
+Actual native close/reopen now discards unapplied Off/0/64/16; Apply retains them, RestoreDefaults remains draft-only and closing restores accepted custom values. On/60/32/9 versus On/0/64/16 visibly changes blur/icon/font without observed overlap, no pixel/performance claim. True process44491 ->normalQuit/verifiedabsence ->47697 restored accepted On/0/64/16. Defaults subsequently applied/acknowledged, then finalnormalQuit/exactabsence; no native read after quit. Timeout/ignored background AX action recovered with sameobject observation and screenshot-derived coordinate click, no restart workaround.
+
+New native issue not yet fixed: labelsOff removes app/folder names from actualAXtree (unnamed images); labelsOn restores names. Whole appearance slice therefore PARTIAL, not accepted. Next bounded cell/folder accessibility preservation regression/repair; preserve launch/drag/reuse/rename and no unapproved activation route. Fullhandoff Workflow/results/APPEARANCE_NATIVE_CHECKPOINT.md. Prior callback/locale coverage and realIME/VoiceOver/physical/120Hz/capacity-approval boundaries retained. No own app/agent/job left, no formaldata/install/sign/commit/Space/reference-code/resource use. Fullgoal ACTIVE/incomplete.

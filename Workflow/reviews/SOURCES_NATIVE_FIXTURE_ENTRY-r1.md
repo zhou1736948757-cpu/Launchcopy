@@ -1,0 +1,7 @@
+# Fixed Sources fixture: independent source review
+
+Date:2026-10-19. Reviewer:Hume. Verdict:SOURCE ACCEPT, no new scoped findings.
+
+Reviewed five slice inputs plus actual assembly/admission dependencies against frozenr2hashes. Strictversion2sources-v1injectsonlycandidateprofileApplications/Baseline AFTERexistingCLIcontent/profileconflictchecks; AppDelegatecontentassembly/Sourcesbaselineconsumesameoptions; existingExtrasadmissionboundaryandisolatedservicespreserved. Production/version1unchanged. NewSwift/Pythonmarkerandchilddirectorychecksconsistent; missingallowedwithoutwrites, file/symlinkreject;invalidenvrejectedbeforewrites/builds. Reviewedplistlib.InvalidFileExceptiontesthelpercorrection:onlyproperexpectedparserrejection, successfulinvalidinputstillfailsassertion.
+
+Scope boundary: pre-existingPythonprofileverifierchecks5paths; currentSwiftUITestProfilealsoLibrary/LaunchActivity. This acceptance does NOTclaimwhole-profileverificationequivalence or eliminateactualruntimefailclosedchecks. No newpathaccess/servicepermissions. Review is staticonly; no tests/build/UI/OS/Git/sourcewrites. Main owns actualserial/nativeevidence. Reviewercompletedandclosed.

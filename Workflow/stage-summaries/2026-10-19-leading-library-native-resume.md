@@ -1,0 +1,20 @@
+# Leading Library native resume
+
+Date:2026-10-19. User explicitly reported manual unlock; actual CUA confirmed readable old owned app. Normal Cmd-Q then AX yielded procNotFound; exact ps now confirms old52219absent, so successful normal Quit is supported by process state, not inferred from error alone.527source/newr3 executable freshlymatch beforelaunch. No formalapp/data touched; no signals/install/shellUI. Main nativeonly; no sourcechanges/tests/build needed merely to check this matchingcandidate.
+
+Next: native-open9a438f14 r3 strict isolated profile; coldOFF→enable onlyownLibrary; retainedbutton/Escape, page return, nativegeneratedscroll vs physicalseparate; follow Docs/LEADING_LIBRARY_NATIVE_VALIDATION.md. Oldblocked audit is superseded by actual manualunlock/access, not inherited into a fresh blocker run. Goaltool reported oldblocked status before actualresume; tools cannot themselves resume status, so do not fakecomplete/paused. Continue human-authorized work.
+
+## Current own50252 / observed native controls
+Native exact r3 launched; ps confirms50252 at exactnewcandidate, old52219absent. Cold SettingsLibraryOFF and activityOFF observed; explicitly enabled Libraryonly in newisolatedprofile, Savedreceipt observed, historyremainedOFF. Mainsearch setDenseApp60→LibrarybuttonAX→Library82→independentLibraryqueryDenseApp35→EscapeclearsLibraryquery(82)→Escape returns mainDenseApp60. Mainsearch then cleared; secondpage dot nativeclick selected2of2; Librarybutton→Back restored2of2. Actualnativecontrols support these scoped gates, notphysicalswipe.
+
+CUA coordinateLibraryclick initialnochange; later AXbutton request timedout but same50252stayedalive0CPU and followupAX/screenshot provedLibraryentered; no restart/crash claim. Sky nativepipeclosed once recovered on samehandle. AXcannotComplete when clearingmainquery nonetheless followed byactualemptyquery/results. Rawwallpaper screenshots notsaved.
+
+GeneratedCUAhorizleft1/right2 producednoobservednavigation in onefilteredmainpage; generateddown inLibrary producednoobservedviewportchange. Native AX ScrollDown on actualLibraryscrollview moved scrollbar0→0.139475. This contrasts inputmethods, not proof oftoolrootcause or repairedphysicalrouting. NextrestoreLibraryscrolltop/Backto2/firstdot, leave empty mainpage1 for humanphysicalleadingLibrarytest. Readonlysubagent examining initiallyblankLibraryiconcolumn while Main owns UI, no sourcechangeauthorizedfromhypothesisalone.
+
+## Latest native checkpoint / physical handoff
+Same50252/9a438f14,527source/executable hashes unchanged. NativeLibraryAXscroll movedviewport0→0.139475→0; actualinline screenshots showedrows11–20 andoriginal1–10 allcoloredicons afterscrollreturn. No persistentmissingicon established; Bacon readonlysource audit didnotattributeinitialblank toinactivekey alone (sourceguarddoesnotrequirekey). Conditional samekey/generation retrygap exists inrequestIcon afterfailure/currentness-rejection, but no evidence itoccurred here; no speculative patch frominitialscreenshot. Agentclosed.
+
+Back again restored mainpage2of2; firstdotclick followed by visualfirstpage DenseFolder/top36 verifiedemptyquery ready. Oneasync humanphysicaltestrequest sent: realtwofinger right→leftLibrary thenleft→firstmain; normalenter/return/followfinger/backgroundrouting. Main mustnot touchUI whileuserisperformingthisrequest. Generatedscrollnoneffects remaininconclusive, notnative/physicalpass. Source/build unchanged; no rerunclosedtests/build or oldsourcepacket needed.
+
+## Subsequent user physical confirmation and defect report —2026-10-19
+User confirmed “能正常进入并返回”: entry/return only. Follow-finger/no-background-motion were not separately confirmed. User subsequently reported the blue search focus decoration remaining on the first app page, supplied screenshots, and requested iOS-inspired category cards. Visual acceptance reopened, new spec Docs/LIBRARY_CATEGORY_GALLERY_SPEC.md; native-results-r1 remains historical, human-results-r2.json adds scoped evidence without rewriting it.

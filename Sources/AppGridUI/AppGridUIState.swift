@@ -13,6 +13,7 @@
 // 描述文本全部中性：不含 app 名 / bundle ID / 路径 / query 原文（§3.3 + Explorer C 红线）。
 
 import Foundation
+import LauncherLocalization
 
 /// AppGrid 整体中性 UI 状态。
 public enum AppGridUIState: Equatable, Sendable {
@@ -25,13 +26,19 @@ public enum AppGridUIState: Equatable, Sendable {
 
     /// 可访问描述（§9：loading/empty/partial failure 有可访问描述）。
     public var accessibilityDescription: String {
+        catalogTextKey.englishFallback
+    }
+
+    /// Shared static vocabulary for the fallback API and localized retained status view.
+    /// Mapping a state does not load resources or format a presentation string.
+    var catalogTextKey: CatalogTextKey {
         switch self {
-        case .loading: return "Loading application catalog…"
-        case .ready: return "Application catalog ready"
-        case .empty: return "No applications found"
-        case .partialFailure: return "Some applications could not be loaded"
-        case .refreshing: return "Refreshing application catalog…"
-        case .noResults: return "No applications match the search"
+        case .loading: return .loading
+        case .ready: return .ready
+        case .empty: return .empty
+        case .partialFailure: return .partialFailure
+        case .refreshing: return .refreshing
+        case .noResults: return .noResults
         }
     }
 

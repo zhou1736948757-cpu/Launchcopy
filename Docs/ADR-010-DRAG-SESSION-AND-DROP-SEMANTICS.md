@@ -154,3 +154,6 @@
 ## T-1F-A 实现注记
 
 - 无偏差。M3 create folder 初始成员 = [target, source]（先目标后源）、folder 顶层位 = drop 目标 target 原 index（**格子位置语义：insertion = targetIndex，不做 targetIndex − 1**；先算后删再 clamp；BUG7 2026-09-01 wave-a 语义修订，取代 BUG6 wave-b 的 targetIndex − 1）、中性默认标题 `Group N`（最小未用 N）；M4 already-member → no-op（不增 generation）；M5 剩 1 逻辑成员 → 原子逻辑 dissolve（剩余成员回 folder 原顶层位）、剩 0 → 删除 folder；跨 folder move 与源 folder 收缩归并进同一次原子提交（generation 只 +1）；取消路径不进入引擎（cancelled 语义保留位，零写盘）。
+
+## 2026-10-19 implementation note: capture-independent move-out elevation
+The pre-collapse preview capture remains authoritative. After collapsing the panel and switching visual host, AppDelegate now calls capture-free `elevateMoveOutPreview` instead of recapturing the potentially cleared/reused source. Existing preparation entry remains compatible; teardown guards prevent resurrection. New unshown tests preserve captured image/name across host changes/source reuse. No drop/threshold/page/commit semantics or measured physical-performance result changes. Explicit folderGrid content context/actual fractional fit is governed by FOLDER_MEMBER_LAYOUT_REFINEMENT_SPEC.md. Native generated move-out admission remains inconclusive; unit success must not be called physical/native motion PASS.

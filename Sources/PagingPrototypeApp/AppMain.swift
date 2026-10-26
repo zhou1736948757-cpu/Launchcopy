@@ -19,40 +19,34 @@ struct PagingPrototypeMain {
 
     static func main() {
         let arguments = Array(CommandLine.arguments.dropFirst())
-
-        // 无头性能探针（T-step6）：脚本化手势旅程 × 页面预设，打印表格并退出（不开窗口）。
-        if ProcessInfo.processInfo.environment["PAGING_PROTOTYPE_PERF"] == "1" {
-            exit(PerfBenchmark.run())
-        }
-
-        // 无头 smoke 测试缝（不开窗口；用于 CI/无头环境验证真实入口）。
-        if ProcessInfo.processInfo.environment["PAGING_PROTOTYPE_SMOKE"] == "1" {
-            runSmoke(arguments: arguments)
-            exit(0)
-        }
-
-        let parsed = AppArguments.parse(arguments)
-        switch parsed {
-        case .failure(let error):
+        let plan = AppStartupPlan.resolve(arguments: arguments,
+            environment: ProcessInfo.processInfo.environment,
+            bundleIdentifier: Bundle.main.bundleIdentifier, bundleURL: Bundle.main.bundleURL,
+            metadata: Bundle.main.object(forInfoDictionaryKey: NativeUITestEntry.metadataKey),
+            gestureMetadata: Bundle.main.object(forInfoDictionaryKey: GestureValidationEntry.metadataKey),
+            integratedMetadata: Bundle.main.object(forInfoDictionaryKey: IntegratedPreviewEntry.metadataKey))
+        switch plan {
+        case .reject:
+            fputs("paging-ui-test: startup configuration rejected\n", stderr)
+            exit(2)
+        case .legacyReject(let error):
             fputs("paging-prototype: 参数错误：\(error)\n", stderr)
             fputs(AppArguments.helpText(), stderr)
-            if case .invalidMomentumDecay = error {
-                // T-worker-b-tune：调参参数非法必须显式失败——静默回退默认值会掩盖错误试值。
-                exit(2)
+            exit(2)
+        case .check(let options):
+            // Neutral resolver-only observation: no help/raw errors/diagnostic sessions.
+            print("startup-check: isolated=\(options.uiTestProfile != nil) windowed=\(options.uiTestWindowed) folderLab=\(options.folderLab)")
+            exit(0)
+        case .performance:
+            exit(PerfBenchmark.run())
+        case .smoke:
+            runSmoke(arguments: arguments)
+            exit(0)
+        case .application(let options, let parseError):
+            if let parseError {
+                fputs("paging-prototype: 参数错误：\(parseError)\n", stderr)
+                fputs(AppArguments.helpText(), stderr)
             }
-            if case .invalidMomentumGlideFrames = error {
-                // T-worker-b-glide：momentum 截断帧数非法 → 显式失败（同上，不静默回退）。
-                exit(2)
-            }
-            if case .invalidMomentumOvershoot = error {
-                // T-worker-b-overshoot2：过冲钳制非法 → 显式失败（同上，不静默回退）。
-                exit(2)
-            }
-            if case .invalidFrameTimerTolerance = error {
-                // 性能 A/B 配置非法必须显式失败，避免把错误试值静默回退为生产默认。
-                exit(2)
-            }
-        case .success(let options):
             if options.helpRequested {
                 print(AppArguments.helpText())
                 exit(0)
@@ -60,15 +54,12 @@ struct PagingPrototypeMain {
             if options.pageHosting == .composited {
                 print("paging-prototype: --page-hosting composited 保留未实现（ADR-002 方案 1 先行），本次以 live 运行")
             }
+            let app = NSApplication.shared
+            let delegate = AppDelegate(options: options)
+            app.delegate = delegate
+            app.setActivationPolicy(.regular)
+            app.run()
         }
-
-        // 参数错误也继续启动（默认配置），绝不崩溃。
-        let resolvedOptions = (try? parsed.get()) ?? .default
-        let app = NSApplication.shared
-        let delegate = AppDelegate(options: resolvedOptions)
-        app.delegate = delegate
-        app.setActivationPolicy(.regular)
-        app.run()
     }
 
     // MARK: - smoke

@@ -1,0 +1,47 @@
+# Optional Library Recent and Frequent Launches
+
+Date: 2026-10-18
+Status: APPROVED_IMPLEMENTATION_CONTRACT — the human selected the recommended explicit proposal on 2026-10-18.
+
+## Problem and desired outcome
+The full independent LaunchBetter-on-Launchcopy roadmap identifies recent/suggested applications as a remaining Library capability. The approved first Library intentionally records no history. This proposal extends that contract only after confirmation, rather than silently tracking local activity under the broad parity goal. It is not a claim to reproduce an undocumented reference ranking algorithm.
+
+Users who explicitly opt in can revisit applications they opened from Launchcopy without searching or navigating categories. Existing category browsing, manual categories, hidden apps, aliases, search, grid return context and default-disabled Library remain intact.
+
+## Proposed scope and product contract
+- Add one clearly explained default-OFF control in the existing Library settings: remember applications opened from Launchcopy. Explain that it stores local application identities and launch-request times/counts; it does not measure general Mac usage.
+- When Library and tracking are both enabled, show Recent (up to12 distinct apps ordered by latest accepted launch request) and Frequent (up to8 apps ranked by accepted requests in the last30 calendar days, with latest request and stable identity as deterministic ties). The same app may appear in both sections; categories remain unchanged.
+- Track only a validated launch request accepted by the existing public launch executor from the main grid, folder, Library or context action. Do not infer that NSWorkspace acceptance proves a new process, a successful cold launch, active use, duration or foreground attention. Failed/rejected/stale/hidden requests do not count. Do not subscribe to other applications' launch/activation events, poll processes, install event taps, or collect keyboard/search activity.
+- Recording is independent of Library visibility but requires the Library feature enabled. Disabling tracking or Library immediately stops admission and hides both sections. Existing retained records are not silently erased on toggle; the explanation points to a separate Clear History action. Re-enabling must not replay events that occurred while disabled.
+- The rolling30-day projection excludes expired records. Retain at most256 application identities and30 daily count buckets per identity, with bounded counts and timestamps. Prefer most-recent identities on eviction. Prune on load and accepted updates, not on every frame. Do not claim timed physical erasure while the process is not running.
+- Hidden apps are never displayed in these sections or searchable through them. Temporarily unavailable apps remain dormant within the retention cap but are excluded until present in the current catalog. Alias changes update display names, not identity or statistics. Clearing aliases/categories/appearance must not clear history, and clearing history must not change those stores or layout.
+- Clear History requires an explicit confirmation explaining the scope and irreversibility. Cancellation changes nothing. Success clears only this feature's records and advances the owner generation so delayed pre-clear work cannot restore them. Clearing never enables tracking.
+- No uploads, exports, diagnostics containing identities/times, or inference-based recommendations. Existing privacy-neutral diagnostics stay neutral. Recent/Frequent panels are not a new page in the outer pager.
+
+## Architecture and data boundaries
+Current seams inspected: AppLaunchController funnels validated executor calls, but its existing onLaunchAttempt callback exposes only the neutral outcome; it is NOT sufficient to attribute history safely. An identity-bearing internal success event would need an explicit, locally scoped observer attached after current validation/executor acceptance. Preserve existing neutral callback and telemetry semantics; do not add an alternate launch path or bypass validation. Deduplicate one accepted request, not one view callback or one displayed cell.
+
+Keep activity preferences/data in a separate versioned, bounded local store and candidate-local namespace; do not migrate Library schema1 or workspace layout. Stable identities reuse current canonical bundle identity; a path-only fallback needs a profile-local opaque identity so the activity payload does not store raw filesystem paths. This is privacy minimization, not encryption/anonymity. Future schemas are read-only, malformed payloads need explicit recovery, and unresolved test profiles must never fall back to formal data.
+
+The owner retains enable/clear generation and latest catalog/management context. Pure Recent/Frequent projections run outside frame callbacks; publish only at existing safe interaction boundaries. Bound background writes to one active plus one latest queued snapshot with actual save receipts. Launch must not wait for history disk I/O. Surface history-save failures as nonfatal and distinguish them from launch failures. Accepted writes participate in the existing bounded Quit drain/default-Cancel policy; privacy-disable admission must take effect immediately even if an earlier write is pending.
+
+No PagingCore, touch recognizer, gesture thresholds, Timer tolerance, adaptive folder capacity/material or outer navigation-model change. No reference source/assets, formal-data import, OS preference change, signing/installation or distribution.
+
+## Verification and acceptance
+- Pure default-OFF/no-file-write behavior; exact ordering/ties/limits/day pruning, duplicate event handling, unavailable/hidden/alias identities and malformed clock/count values.
+- All launch entry points feed the same current validated success seam once; unsuccessful/stale requests produce no record. No event from before enable or clear may write into a later owner generation.
+- Background-write coalescing, failure/retry/recovery/future-schema preservation, clear cancellation/success and post-clear stale callback rejection. Separate isolated profile and normal Quit/reopen persistence checks.
+- New localized labels/help/status/clear confirmation in English, Simplified Chinese and Japanese, keyboard navigation and accessible section/control names. Search/category results and main grid state remain unchanged after entering/leaving sections.
+- Establish matched current-candidate launch/Library-open/idle/paging work budgets before implementation. No new source scan, synchronous persistence, activity projection or full image regeneration on frame callbacks. Compare under the same app count/viewport/build/frame source; unit test timing is not physical smoothness proof.
+- Focused and full nonzero XCTest, independent source review, Debug/Release and packaged-localization checks; unique unsigned isolated candidate/hash; exact native opt-in/off/clear/restart verification and human approval. Preserve failed attempts and separate source/runtime/performance evidence.
+
+## Maintenance and unresolved decision
+Owner-specific tests and the existing shared launch pipeline should prevent new views from double-counting. Data retention/ranking/labels must remain documented beside their pure policies. Any future system-wide use observation, duration collection, cloud sync or personalized recommendation model is a different privacy contract.
+
+Human decision required: approve this optional local Recent/Frequent contract, continue with only the already-approved non-tracking Library, or prioritize a different remaining parity branch. Until answered, no implementation, tracking, new store or control is authorized. The full parity objective remains incomplete; this proposal does not redefine it around completed features.
+
+## Approval and implementation clarification — 2026-10-18
+The human explicitly approved the default-OFF, local-only, Launchcopy-originated,30-day Recent/Frequent proposal. This authorizes implementation and isolated opted-in verification, not enabling collection in formal user data. Prior PROPOSED/unresolved statements remain historical. Present Recent and Frequent as additional Library sidebar/compact-picker sections using the existing results/details/action pipeline; they are not a separate outer page. Categories, counts and query retain their existing meanings. DefaultOFF shows neither section. Use epoch-day UTC buckets (current day plus previous29) for deterministic retention independent of locale/time-zone changes. Successful launch means executor acceptance, not actual process/usage proof.
+
+## Privacy failure clarification — 2026-10-18
+Disabling Library explicitly switches its optional activity-recording preference OFF as well as stopping admission immediately, without erasing retained records. A failed Library preference save may truthfully keep the acknowledged Library value ON, but cannot restore tracking: activity OFF remains a separate accepted snapshot/receipt (and is protected on save failure). Later enabling Library does not silently opt back in; recording needs its own explicit ON action. The localized help states this. Clear followed by privacy OFF must coalesce the empty payload AND its outstanding clear-completion barrier; only the newest successful durable snapshot releases it. These restore the approved stop/no-automatic-replay contract rather than adding tracking scope.

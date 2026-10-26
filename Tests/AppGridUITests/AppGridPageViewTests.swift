@@ -41,6 +41,21 @@ final class AppGridPageViewTests: XCTestCase {
 
     // MARK: - 同步文本渲染
 
+    func testPageNumberIsNotVisibleAboveProductionGrid() async {
+        let (page, pipeline) = makePage(loader: GatedIconLoader())
+        defer { pipeline.shutdown() }
+        page.render(pageIndex: 1,
+                    content: makeContent(revision: 1, page: 1, titles: ["Fixture"]),
+                    pageCount: 3, reuseGeneration: 1)
+        await drainDeferredPresentationTurns()
+        XCTAssertEqual(page.pageLabelText, "Page 2 of 3")
+        await drainDeferredPresentationTurns()
+        XCTAssertEqual(page.accessibilityLabel(), "Page 2 of 3")
+        let visiblePageLabels = page.subviews.compactMap { $0 as? NSTextField }
+            .filter { !$0.isHidden && $0.stringValue.hasPrefix("Page ") }
+        XCTAssertTrue(visiblePageLabels.isEmpty)
+    }
+
     func testRenderShowsNamesSynchronously() async throws {
         let loader = GatedIconLoader()
         let (page, pipeline) = makePage(loader: loader)
@@ -58,7 +73,9 @@ final class AppGridPageViewTests: XCTestCase {
         XCTAssertEqual(page.cellCount, 2)
         XCTAssertEqual(page.cell(at: 0)?.nameLabel.stringValue, "Alpha")
         XCTAssertEqual(page.cell(at: 1)?.nameLabel.stringValue, "Beta")
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(page.pageLabelText, "Page 1 of 3")
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(page.accessibilityLabel(), "Page 1 of 3")
         // load 任务运行在并发池线程（gate 注册与主线程存在竞态）→ 先等 pending 就位再断言
         // （与同文件其他测试一致的模式；消除偶发 pendingKeyCount == 0 的 flaky）。
@@ -419,6 +436,7 @@ final class AppGridPageViewTests: XCTestCase {
                     pageCount: 5, reuseGeneration: 1)
 
         XCTAssertEqual(page.cell(at: 0)?.accessibilityLabel(), veryLongName, "辅助技术读完整名称")
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(page.accessibilityLabel(), "Page 1 of 5")
         // 视觉截断不改变可访问标签
         XCTAssertEqual(page.cell(at: 0)?.nameLabel.lineBreakMode, .byTruncatingTail)

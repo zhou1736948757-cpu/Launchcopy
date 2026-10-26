@@ -33,16 +33,23 @@ public struct AppGridRefreshOutcome: Sendable, Equatable {
     public let succeeded: Bool
     /// 快照记录数。
     public let appCount: Int
-    /// 失败分类计数合计（unreadable/corrupted/…；不含任何原文）。
+    /// Total anonymous issue count, including non-blocking issues; never negative.
     public let failureCount: Int
+    /// Non-blocking issues already included in `failureCount`, bounded to 0...failureCount.
+    /// Defaults to zero so existing data sources continue to report discovery failures.
+    public let nonBlockingFailureCount: Int
+    /// Issues that prevented discovery of a source or app item.
+    public var discoveryFailureCount: Int { failureCount - nonBlockingFailureCount }
     /// 本次刷新被更新的 refresh 取代/取消。
     public let cancelled: Bool
 
     public init(succeeded: Bool = false, appCount: Int = 0,
-                failureCount: Int = 0, cancelled: Bool = false) {
+                failureCount: Int = 0, nonBlockingFailureCount: Int = 0,
+                cancelled: Bool = false) {
         self.succeeded = succeeded
         self.appCount = appCount
-        self.failureCount = failureCount
+        self.failureCount = max(0, failureCount)
+        self.nonBlockingFailureCount = min(max(0, nonBlockingFailureCount), self.failureCount)
         self.cancelled = cancelled
     }
 }

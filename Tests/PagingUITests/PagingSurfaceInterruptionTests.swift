@@ -139,7 +139,8 @@ final class PagingSurfaceInterruptionTests: XCTestCase {
         XCTAssertEqual(surface.core.state, .idle)
     }
 
-    func testPageCountReductionDuringSettlingIsSafe() {
+    @MainActor
+    func testPageCountReductionDuringSettlingIsSafe() async {
         let surface = makeSurface(pageCount: 5)
         gestureBegan(surface, at: 0)
         gestureChanged(surface, deltaX: 1200, at: 0.5) // 两页位移
@@ -154,6 +155,7 @@ final class PagingSurfaceInterruptionTests: XCTestCase {
         XCTAssertEqual(surface.core.committedPage, 0)
         XCTAssertEqual(surface.core.visualOffset, 0, accuracy: 1e-9)
         XCTAssertNil(surface.hostForPage(1))
+        await drainDeferredPresentationTurns()
         XCTAssertEqual(surface.accessibilityDescription, "Page 1 of 1")
     }
 

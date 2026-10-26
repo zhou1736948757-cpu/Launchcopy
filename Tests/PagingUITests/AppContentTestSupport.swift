@@ -134,6 +134,9 @@ func waitUntil(_ condition: @escaping () -> Bool,
 func wireAssembly(_ assembly: AppCatalogAssembly, to surface: PagingSurface) {
     surface.contentProvider = assembly.provider
     surface.renderer = assembly.renderer
+    assembly.renderer.committedPageProvider = { [weak surface] in
+        surface?.core.committedPage ?? 0
+    }
     assembly.refreshController.itemsPerPage = surface.itemsPerPage
     assembly.onPresentationUpdate = { [weak surface] update in
         guard let surface else { return }

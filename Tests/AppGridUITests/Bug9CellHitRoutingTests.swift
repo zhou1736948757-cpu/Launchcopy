@@ -1,7 +1,7 @@
 // AppGridUITests — Bug9CellHitRoutingTests（T-1F-B9-wave-a：BUG9 cell hitTest 漏斗回归）
 // 验证（任务包 §6①-⑤ + ⑥⑦漏斗内直测；夹具中性 fixture.*，注入实例 coordinator）：
-// - ①/②/③ hitTest(icon 中心/nameLabel/背景) === cell：子视图（NSImageView/NSTextField 家族）
-//   不再拦截 mouse 路由，统一进 cell 自身 mouseDown（BUG9-REPORT §2 R1 候选修复面）；
+// - ① icon（±4pt 热区，folder 为 folderSymbol 同框）命中 cell；nameLabel / 格内 padding /
+//   cell 外部均不命中（落空点走既有空白路径，不进入启动链）。
 // - ④ cell.mouseDown → coordinator.pointerDown（census snapshot s10_cell_mousedown_fired ≥ 1）；
 // - ⑤ shared 与注入均 nil → s11_cell_lookup_nil+1 且不 crash、pointerDown 不进入；
 // - ⑥ 漏斗下 drag 仲裁链完整（hitTest→mouseDown→pressed→拖过阈值→dragging；拖拽不派发点击）；
@@ -62,14 +62,14 @@ final class Bug9CellHitRoutingTests: XCTestCase {
         FolderID(uuid: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
     }
 
-    /// 窗口 + host + cell（frame 偏移非零，验证 hitTest 坐标系正确）。
+    /// 窗口 + host + cell（大 frame 偏移，验证 hitTest 的父坐标契约）。
     private func makeWindowWithCell() -> (window: NSWindow, host: NSView, cell: AppGridCellView) {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         let host = makeHost()
         window.contentView = host
         let cell = makeAppCell("fixtureapp")
-        cell.frame = NSRect(x: 20, y: 20, width: 80, height: 80)
+        cell.frame = NSRect(x: 240, y: 170, width: 80, height: 80)
         host.addSubview(cell)
         host.layoutSubtreeIfNeeded()
         return (window, host, cell)
@@ -108,13 +108,18 @@ final class Bug9CellHitRoutingTests: XCTestCase {
         return (host, coordinator, cell)
     }
 
-    // MARK: - §6 ①②③：hitTest 漏斗（icon/标签/背景统一命中 cell）
+    // MARK: - §6 ①②③：hitTest 漏斗（icon±4pt 热区命中 cell；label/padding/外部落空）
+    //
+    // T-1J-LM-HITREVERT：恢复用户验收的 icon±4 启动热区契约（Reviewer r1 M1：整 cell bounds
+    // 命中未经授权；D-1J-HIT-REGION-REVERT 决策恢复 icon±4）。nameLabel / 格内 padding 点击
+    // 不命中 cell，落空后沿既有空白路径分类。
 
     func testHitTestAtIconCenterReturnsCell() {
         let (window, _, cell) = makeWindowWithCell()
-        // 直接以 cell 为入口调用（与父视图默认 hitTest 下探同一调用约定：父坐标系点）。
-        let iconCenterInSuperview = cell.convert(
-            NSPoint(x: cell.iconView.frame.midX, y: cell.iconView.frame.midY), to: cell.superview)
+        // Direct calls use the receiver's superview coordinate space. The large frame
+        // origin makes an accidental local-coordinate interpretation fail this assertion.
+        let iconCenterInCell = NSPoint(x: cell.iconView.frame.midX, y: cell.iconView.frame.midY)
+        let iconCenterInSuperview = cell.convert(iconCenterInCell, to: cell.superview)
         XCTAssertTrue(cell.hitTest(iconCenterInSuperview) === cell,
                       "icon（最大点击靶，NSImageView）中心必须命中 cell 自身")
         // 真实窗口路由面：contentView.hitTest 沿树下探到 cell.hitTest。
@@ -122,31 +127,75 @@ final class Bug9CellHitRoutingTests: XCTestCase {
             NSPoint(x: cell.iconView.frame.midX, y: cell.iconView.frame.midY), to: nil)
         XCTAssertTrue(window.contentView?.hitTest(windowPoint) === cell,
                       "窗口层 hitTest 在 icon 区域必须路由到 cell（漏斗出口）")
+        // ±4 外扩边仍在热区内（icon 外缘 +3pt < +4pt padding → 命中）。
+        let paddedEdgeInCell = NSPoint(x: cell.iconView.frame.maxX + 3,
+                                       y: cell.iconView.frame.midY)
+        let paddedEdgeInSuperview = cell.convert(paddedEdgeInCell, to: cell.superview)
+        XCTAssertTrue(cell.hitTest(paddedEdgeInSuperview) === cell,
+                      "icon 外扩 4pt 热区内的点必须命中 cell")
     }
 
-    func testHitTestAtNameLabelReturnsCell() {
+    func testHitTestAtNameLabelMissesCell() {
         let (window, _, cell) = makeWindowWithCell()
-        let labelPointInSuperview = cell.convert(
-            NSPoint(x: cell.nameLabel.frame.midX, y: cell.nameLabel.frame.midY), to: cell.superview)
-        XCTAssertTrue(cell.hitTest(labelPointInSuperview) === cell,
-                      "名称标签（NSTextField label）点击必须命中 cell 自身")
-        let windowPoint = cell.convert(
-            NSPoint(x: cell.nameLabel.frame.midX, y: cell.nameLabel.frame.midY), to: nil)
-        XCTAssertTrue(window.contentView?.hitTest(windowPoint) === cell,
-                      "窗口层 hitTest 在名称标签区域必须路由到 cell")
+        let local = NSPoint(x: cell.nameLabel.frame.midX, y: cell.nameLabel.frame.midY)
+        let superviewPoint = cell.convert(local, to: cell.superview)
+        XCTAssertNil(cell.hitTest(superviewPoint),
+                     "名称区域在 icon±4 热区之外，不得命中 cell（落空 → 空白路径）")
+        let windowPoint = cell.convert(local, to: nil)
+        XCTAssertFalse(window.contentView?.hitTest(windowPoint) === cell,
+                       "窗口层 hitTest 在名称区域不得路由到 cell")
     }
 
-    func testHitTestAtBackgroundReturnsCell() {
+    func testHitTestAtCellPaddingMissesCell() {
         let (window, _, cell) = makeWindowWithCell()
-        // 格内空白：避让 icon（y ∈ [20,68]）与标签（y ∈ [0,26]）的纯背景点。
-        let backgroundPoint = NSPoint(x: 6, y: cell.bounds.maxY - 4)
-        let pointInSuperview = cell.convert(backgroundPoint, to: cell.superview)
-        XCTAssertTrue(cell.hitTest(pointInSuperview) === cell, "格内空白点击必须命中 cell 自身")
-        let windowPoint = cell.convert(backgroundPoint, to: nil)
+        let local = NSPoint(x: 6, y: cell.bounds.maxY - 4)
+        let superviewPoint = cell.convert(local, to: cell.superview)
+        XCTAssertNil(cell.hitTest(superviewPoint),
+                     "格内 padding 在 icon±4 热区之外，不得命中 cell（落空 → 空白路径）")
+        let windowPoint = cell.convert(local, to: nil)
+        XCTAssertFalse(window.contentView?.hitTest(windowPoint) === cell,
+                       "窗口层 hitTest 在格内 padding 不得路由到 cell")
+    }
+
+    /// folder cell：热区 = folderSymbolView frame ±4（与 iconView 同 slot）；名称区仍落空。
+    func testFolderCellHitTestUsesFolderSymbolFrame() {
+        let (window, host, appCell) = makeWindowWithCell()
+        appCell.removeFromSuperview()
+        let cell = AppGridCellView(frame: NSRect(x: 240, y: 170, width: 80, height: 80))
+        cell.bindFolder(title: "fixturefolder", memberCount: 2, token: ItemBindingToken(
+            catalogRevision: 1,
+            pageIdentity: PagePresentationID(revision: 1, pageIndex: 0),
+            itemSlot: 0,
+            appID: AnyHashable(makeFolderID()),
+            reuseGeneration: 0,
+            iconKey: nil,
+            surfaceGeneration: 0))
+        host.addSubview(cell)
+        host.layoutSubtreeIfNeeded()
+        cell.layout()
+        XCTAssertTrue(cell.isFolderCell)
+        XCTAssertTrue(cell.isFolderSymbolVisible, "folder cell 应显示中性符号")
+
+        // folderSymbolView 与 iconView 同 frame（layout 同 slot）；符号区中心命中 cell。
+        let symbolCenterInCell = NSPoint(x: cell.iconView.frame.midX, y: cell.iconView.frame.midY)
+        XCTAssertTrue(cell.hitTest(cell.convert(symbolCenterInCell, to: cell.superview)) === cell,
+                      "folder cell：符号区（±4 热区内）必须命中 cell")
+        let windowPoint = cell.convert(symbolCenterInCell, to: nil)
         XCTAssertTrue(window.contentView?.hitTest(windowPoint) === cell,
-                      "窗口层 hitTest 在格内空白区域必须路由到 cell")
-        XCTAssertEqual(cell.hitTest(pointInSuperview), window.contentView?.hitTest(windowPoint),
-                       "两条调用面命中同一视图")
+                      "窗口层 hitTest 在 folder 符号区必须路由到 cell")
+
+        let labelInCell = NSPoint(x: cell.nameLabel.frame.midX, y: cell.nameLabel.frame.midY)
+        XCTAssertNil(cell.hitTest(cell.convert(labelInCell, to: cell.superview)),
+                     "folder cell：名称区域在 icon±4 热区之外，不得命中")
+    }
+
+    func testHitTestOutsideCellMissesCell() {
+        let (window, _, cell) = makeWindowWithCell()
+        let outside = NSPoint(x: cell.frame.minX - 1, y: cell.frame.midY)
+        XCTAssertNil(cell.hitTest(outside), "cell 外部不得命中 cell")
+        let windowPoint = cell.convert(NSPoint(x: -1, y: cell.bounds.midY), to: nil)
+        XCTAssertFalse(window.contentView?.hitTest(windowPoint) === cell,
+                       "窗口层 hitTest 在 cell 外部不得路由到 cell")
     }
 
     // MARK: - §6 ④：mouseDown 经 cell → pointerDown 被调（census s10 ≥ 1）

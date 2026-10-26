@@ -364,4 +364,29 @@ final class LayoutStoreCodecTests: XCTestCase {
         encoder.outputFormatting = [.sortedKeys]
         XCTAssertEqual(LayoutStoreCodec.decode(try encoder.encode(e)), .corrupt)
     }
+    func testEncodingCountValidButByteOversizedLayoutIsRejected() {
+        let layout = PersistentWorkspaceLayout(generation: .init(1),
+            topLevelOrder: [.app(.canonicalPath("/Synthetic/" + String(repeating: "x", count: LayoutStoreCodec.maxFileBytes)))], folders: [])
+        XCTAssertTrue(WorkspaceLayoutValidator.validate(layout).isEmpty)
+        XCTAssertThrowsError(try LayoutStoreCodec.encode(layout, writeGeneration: 1)) {
+            XCTAssertEqual($0 as? LayoutStoreCodecError, .overLimit)
+        }
+    }
+    func testNearLimitEncodedEnvelopeIncludingChecksumRoundTrips() throws {
+        let layout = PersistentWorkspaceLayout(generation: .init(1),
+            topLevelOrder: [.app(.canonicalPath("/Synthetic/" + String(repeating: "x", count: LayoutStoreCodec.maxFileBytes - 500)))], folders: [])
+        let data = try LayoutStoreCodec.encode(layout, writeGeneration: 1)
+        XCTAssertGreaterThan(data.count, LayoutStoreCodec.maxFileBytes - 1024)
+        XCTAssertLessThanOrEqual(data.count, LayoutStoreCodec.maxFileBytes)
+        XCTAssertEqual(LayoutStoreCodec.decode(data), .valid(.init(layout: layout, writeGeneration: 1)))
+    }
+    func testFutureVersionIsProtectedWithoutAnyV1PayloadShape() {
+        for json in ["{\"schemaVersion\":99}", "{\"schemaVersion\":99,\"topLevelOrder\":\"changed\",\"checksum\":false}"] {
+            XCTAssertEqual(LayoutStoreCodec.decode(Data(json.utf8)), .unknownFutureVersion(99))
+        }
+        for json in ["{\"schemaVersion\":1}", "{\"schemaVersion\":0}", "{\"schemaVersion\":\"99\"}"] {
+            XCTAssertEqual(LayoutStoreCodec.decode(Data(json.utf8)), .corrupt)
+        }
+    }
+
 }

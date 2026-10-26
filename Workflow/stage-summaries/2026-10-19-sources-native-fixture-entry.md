@@ -1,0 +1,25 @@
+# Sources native fixture entry prerequisite
+
+Date:2026-10-19. Status: implementation starting under routine isolated-test autonomy.
+
+## Objective / discovered prerequisite
+Current parity matrix identifies approved Sources custom-root chooser/Add/remove/readd/restart as unclosed. Existing native version1 fixes entireApplications root and rejectsCLIcatalogoverride; Baseline/Extras plan cannot discriminate Add. Main inspected actualNativeUITestEntry/AppDelegate/sourceadmission/packagingcode and selectedfixed explicitversion2sources-v1marker using existingoptions.catalogRoots, leavingproduction/version1/AppDelegate unchanged. Specification Docs/SOURCES_NATIVE_FIXTURE_ENTRY_SPEC.md defines exactscope/failclosed/data/testing/delivery. No newprodfeature/securitypermission or originalgoalnarrowing.
+
+## Ownership / baseline
+Main immediatecriticalpath: runtimeentry validation + XCTest/AppKit composition; Worker disjointpackaging/verifier/Pythontests only. Atmost2activeincludingMain; noagentbuild/test/UI; MainserialSwiftPM. Currentdc4ed86f/PID72970 ordinarylargeiconteststillrunning, datauntouched;514inputfreeze/latest3131/0 appliesbeforethischange only. Preservehugeexistingdirtyhistory/noreset/clean/commit/sign/install/referenceaccess/processsignals. Newuniquebuild/profileafterreview; nativepending until exactnewcandidate.
+
+## Next action
+Implement strictversion2resolvedfixedrootonly after existingCLIconflictchecks; noarbitrarycommands/paths. Add sourcefixturefilesystemandlegacyregressions, integratepackagingchange,reviewfrozendiffandserialverification. Recordallfailuresand actualnativeevidence withoutclaimingcompletion.
+
+## Main runtime integration / development test
+Runtime strictversion2sources-v1 marker reuses existingoptions.catalogRoots=ownedBaseline afterCLIconflictchecks; validatesbothfixedchildrencanonical/no symlink/existingdirectory/missingallowedwithoutwrites. Version1/defaultproductionunchanged; noOptions/AppDelegate/admissioncontractchange. NewSourcesNativeFixtureEntryTests sevenmethods includeunshownactualAppDelegateconfigure/makeContentAssembly andrealLocaladmission:Baselinefixed/Extrasaccepted/outsiderejected, whilelegacyAppsrootalreadyCovered. Developmentfocused13/0 (legacy6 +new7), nofullyfrozenpackageclaimwhileworkerownsScripts. Worker stillactivepackaging/verifier/Pythonregressions, nootherbuild/UIjobs.
+
+## First frozen Python run / exact test-harness correction
+Worker completed threeownedScripts, syntaxonly,closed. Main516-inputfreeze r1 stopped onPython12methods/1error: malformedplist correctly raisesplistlib.InvalidFileException, but newtesthelperexpectedexceptions omitted that parsererror. ProductionCLIalreadycatchesallparsefailures neutrally. Main addedonlythat expectedrejectionexception, not acceptinginvalidmetadata/changingproduct. NoSwiftjobs/package startedinfailedr1. Preservepython-r1.log; newfreeze r2serialsuite follows. Hume independentreadonlysourcereview underway, informedoffinaltinytestcorrection.
+
+## Final frozen delivery and native subset
+R2Python12/0,focused114/0,full3138/0,Debug/actualRelease/packageexit0;516inputs verifiedeachboundary. Sourcecandidateb88e0968…/strictversion2marker/plist aa64c631…;postseedentryverificationand3×365/1095resource-onlysmokepassed. HumeSOURCEACCEPTclosed,noscopedfindings;pre-existingnamespaceverifierdifferenceexplicit,notwidenedclaim. Fiveactualearlyinvalidpackagingcasesexit1/noSwift/noartifactwrites.
+
+Actualnative ownSourcePID84225 baseline2→Cancelunchanged→Extrasdraft→closekeepscatalog2/draftretained→Applysaved/discovered4/querySourceretained→automaticOFFsaved. NormalQuit/exactabsence/reopenPID85587recovers4/Extras/OFF. FinalnormalQuit/exactabsence. Fourmetadatafilesunchanged, noAppLaunchclaim. Remainingremove/readdlatentstate/nestedwatcherpacketNOTexecuted; SourcesprofileleftsavedExtras+automaticOFF.
+
+Restoredunchangedvisualdc4ed86fprofileviaFinderOpenPID86437,ordinarywindow/queryempty/folderclosed;249visualseedfilesunchanged. NeutralwallpaperREADYonrestoredoldbinary,thisisrecoverynotcausalityrepairandearlierlongsource-openwaitremainstrue.516currentsourceinputsunchanged;noactiveagent/build/testjobs. Humanvisual andphysical/device/IME/VoiceOver/fullgoalstillopen. ResultSOURCES_NATIVE_FIXTURE_ENTRY_RESULTS.md,receiptfinal-verification-r2.json. CurrentturnPROGRESS;nofalsewholeparityorblockedclaim.

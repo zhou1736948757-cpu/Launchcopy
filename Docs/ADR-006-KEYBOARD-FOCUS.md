@@ -150,3 +150,7 @@ presentationID: PagePresentationID   // revision + pageIndex
 ### 9.5 验收
 - 用户实机验收通过（「没问题了」，decision_recorded T-1E-nav-typewriter-user-accepted）；打字机行为（外层四方向 + 文件夹内 ↓/↑ 环绕）全屏实测无回归（Bug 1-3 行为保持）。
 
+
+---
+
+**Dated correction — 2026-09-16 (D-1J-HIT-REGION-REVERT):** §8.5 所述「命中 cell/icon/label → `super.sendEvent` 透传」反映的是整格命中时期的契约。自 2026-09-16 起启动热区契约恢复为 **icon±4pt**（`acceptsLaunchHit` = 图标/folderSymbol frame 外扩 4pt）：点击名称标签或格内 padding **不再**解析为 cell 命中，走空白分类 → `NSApp.terminate`。icon±4 内命中才透传启动链。此更正不改动本 ADR 的窗口拦截架构决策本身。

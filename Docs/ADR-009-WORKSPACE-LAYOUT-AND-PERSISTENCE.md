@@ -192,3 +192,26 @@ PRIVACY_DATA_MAP 追加「布局存储」段（字段类别表 + 唯一受控例
 - 无偏差。草案所有权模型（唯一持久真相 = 顶层 app/folder 任意交错有序条目 + folder 稳定身份/标题/有序成员 + layout generation）、Q2 引用方案（bundle-ID 主 + canonical path 确定性 fallback，大小写不敏感、忽略尾部 "/"、禁 Swift Hasher/displayName/redactedDescription 当身份、绝不读取 AppID.storage）、Q9 视觉 vs 逻辑 dissolve 区分、Q15 显式 order + comparisonKey、Q16 renameFolder 真 mutation（复用 FolderTitle.normalized 64-grapheme 语义）均按草案实现。
 - 实现补充（非偏差）：`WorkspaceLayoutValidator` 在 10 不变量之外增加完整性检查 `.folderRecordWithoutEntry`（记录无顶层条目 = 不可达 folder），与 `.folderEntryWithoutRecord` 成对；`LayoutMutationResult.cancelled` 为语义保留位，引擎永不产生（取消路径由调用层映射，零写盘）。
 - 编码/落盘层（§10.2 schema v1、LayoutStore adapter）归 T-1F-B；本域 DTO 不自备 Codable。
+
+
+## Accepted lifecycle correction — 2026-10-13
+
+The user explicitly approved: ordinary Quit asynchronously waits for accepted
+workspace enqueue tasks and a bounded flush. Failure or timeout asks Cancel Quit
+or Quit Anyway, defaulting to Cancel. This supersedes Q6's historical instruction
+to record failure without preventing exit. Resident hide is not process Quit.
+Do not perform irreversible launcher/service teardown before this decision.
+Only accepted organization mutations are covered; an uncommitted title draft is
+cancelled by lifecycle cleanup, not silently treated as accepted persisted data.
+
+Implementation seams: WorkspacePersistenceQueue, WorkspaceQuitCoordinator and
+AppDelegate.applicationShouldTerminate. In-flight IO remains owned after timeout;
+late completion is epoch/batch gated. Over-limit and stale terminal rejection must
+not masquerade as nothingPending. Refer to the rename repair plan and stage
+summary for exact test/build/source-review evidence; this ADR is not a GUI or
+real-process restart PASS.
+
+Q5's test-storage requirement still applies. The historical current command-line
+windowed/catalog-root paths do not by themselves isolate production storage.
+Do not use those switches alone for a mutating real GUI test; the explicit
+isolated-profile proposal awaits approval before cross-module implementation.

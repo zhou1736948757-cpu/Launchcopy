@@ -181,9 +181,10 @@ final class DragCommitIntegrationTests: XCTestCase {
                                     page: page, pageCount: surface.core.pageCount)
             case .folder(let folderID):
                 guard folderOpenState.isOpen(folderID) else { return nil }
-                let memberFrames = overlay.memberDragItemFrames(convertedTo: surface, catalog: catalog)
-                let page = folderOpenState.innerPage
-                let pageCount = folderOpenState.innerPageCount
+                let isMovingOut = overlay.isMoveOutPresentationCollapsed
+                let memberFrames = isMovingOut ? [] : overlay.memberDragItemFrames(convertedTo: surface, catalog: catalog)
+                let page = isMovingOut ? surface.core.committedPage : folderOpenState.innerPage
+                let pageCount = isMovingOut ? surface.core.pageCount : folderOpenState.innerPageCount
                 let topLevelFrames: [DragItemFrame]
                 if let pageView = assembly.renderer.pageView(forPage: surface.core.committedPage) {
                     topLevelFrames = pageView.dragItemFrames(convertedTo: surface, catalog: catalog)
@@ -192,7 +193,9 @@ final class DragCommitIntegrationTests: XCTestCase {
                 }
                 return DragGeometry(itemFrames: memberFrames, topLevelFrames: topLevelFrames,
                                     containerWidth: Double(surface.bounds.width),
-                                    page: page, pageCount: pageCount)
+                                    page: page, pageCount: pageCount,
+                                    topLevelMoveOutBounds: isMovingOut ? .init(x: 0, y: 0,
+                                        width: Double(surface.bounds.width), height: Double(surface.bounds.height)) : nil)
             }
         }
 
@@ -343,8 +346,12 @@ final class DragCommitIntegrationTests: XCTestCase {
         }
         overlay.onMemberDragExitPanel = { [weak fixture] in
             guard let fixture else { return }
+            // Match production capture/elevation ordering, not only collapse/host switch.
+            fixture.overlay.prepareMoveOutIconCache()
+            fixture.coordinator.prepareAndElevateMoveOutPreview(above: fixture.overlay)
             fixture.overlay.setMoveOutPresentationCollapsed(true)
             fixture.showMoveOutPreview()
+            fixture.coordinator.elevateMoveOutPreview(above: fixture.overlay)
         }
         coordinator.onSessionStateChange = { [weak fixture] state in
             guard state == .idle,
@@ -406,6 +413,20 @@ final class DragCommitIntegrationTests: XCTestCase {
 
         // drag delta（slot 2）到 x=520 → commit seam（落点语义由 mutation 引擎决定，
         // DragDropTests 已覆盖；此处只断言 commit 发生 + 呈现 = 已提交布局）。
+        // Known-ready pixels must survive the synchronous reorder commit, while
+        // every slot receives a new token. This is not a native scanout assertion.
+        let page = try XCTUnwrap(fixture.assembly.renderer.pageView(forPage: 0))
+        var readyImages: [AppID: NSImage] = [:]
+        var previousBindings: [ItemBindingToken] = []
+        for slot in 0..<page.cellCount {
+            let cell = try XCTUnwrap(page.cell(at: slot))
+            let token = try XCTUnwrap(cell.bindingToken)
+            let id = try XCTUnwrap(token.appID as? AppID)
+            let image = RecordingIconLoader.solidImage()
+            XCTAssertTrue(cell.applyIconIfValid(image, token: token))
+            readyImages[id] = image
+            previousBindings.append(token)
+        }
         let center = try XCTUnwrap(fixture.cellCenter(slot: 2))
         let deltaCell = try XCTUnwrap(fixture.assembly.renderer.pageView(forPage: 0)?.cell(at: 2))
         fixture.coordinator.pointerDown(locationInWindow: center, sourceCell: deltaCell, memberFolderID: nil)
@@ -414,6 +435,18 @@ final class DragCommitIntegrationTests: XCTestCase {
         fixture.coordinator.pointerDragged(locationInWindow: NSPoint(x: 520, y: center.y))
         fixture.coordinator.pointerUp(locationInWindow: NSPoint(x: 520, y: center.y))
         XCTAssertEqual(fixture.commits.count, 1, "合法 drop → commit seam 一次")
+        XCTAssertFalse(readyImages.isEmpty)
+        XCTAssertTrue(fixture.assembly.renderer.pageView(forPage: 0) === page)
+        XCTAssertEqual(page.cellCount, readyImages.count)
+        for slot in previousBindings.indices {
+            let cell = try XCTUnwrap(page.cell(at: slot))
+            let id = try XCTUnwrap(cell.bindingToken?.appID as? AppID)
+            let displayedImage = try XCTUnwrap(cell.iconView.image)
+            let expectedImage = try XCTUnwrap(readyImages[id])
+            XCTAssertTrue(displayedImage === expectedImage)
+            XCTAssertNotEqual(cell.bindingToken, previousBindings[slot])
+        }
+
         XCTAssertNotEqual(fixture.commits[0].topLevelOrder,
                           [.app(ref("alpha")), .app(ref("beta")), .app(ref("delta")),
                            .app(ref("echo")), .app(ref("foxtrot")), .app(ref("gamma"))],
@@ -726,6 +759,70 @@ final class DragCommitIntegrationTests: XCTestCase {
 
     /// 两成员 Folder 的真实 move-out 预览：越界但尚未 mouseUp 时，唯一剩余成员
     /// 覆盖原 Folder cell；commit 后代理清除且剩余成员占据 Folder 原位置。
+    /// First out-of-panel event is aligned with a now-hidden member row.
+    func testTwoMemberMoveOutIgnoresHiddenRowsAndLandsOnMainWithoutExtraMovement() async throws {
+        let fixture = try await makeFixture()
+        defer {
+            DragUISessionCoordinator.shared = nil
+            fixture.coordinator.teardown()
+            fixture.assembly.teardown()
+            fixture.surface.teardown()
+        }
+        let (window, _, _) = try mountInQuitWindow(fixture)
+        let folderID = FolderID(uuid: UUID(uuidString: "00000000-0000-0000-0000-0000000000E9")!)
+        let initial = PersistentWorkspaceLayout(generation: LayoutGeneration(1),
+            topLevelOrder: [.folder(folderID), .app(ref("delta")), .app(ref("echo")),
+                            .app(ref("foxtrot")), .app(ref("gamma"))],
+            folders: [PersistentFolderRecord(id: folderID, title: "Group 1",
+                                             members: [ref("alpha"), ref("beta")])])
+        fixture.coordinator.onCommit(initial)
+        fixture.openFolder(folderID)
+        fixture.overlay.layoutSubtreeIfNeeded()
+        let member = try XCTUnwrap(fixture.overlay.memberCell(at: 0))
+        let iconsReady = await waitUntil { fixture.overlay.memberCell(at: 0)?.iconView.image != nil
+            && fixture.overlay.memberCell(at: 1)?.iconView.image != nil }
+        XCTAssertTrue(iconsReady)
+        let down = member.iconView.convert(NSPoint(x: member.iconView.bounds.midX,
+                                                   y: member.iconView.bounds.midY), to: nil)
+        let memberRect = member.convert(member.bounds, to: fixture.overlay)
+        let exitPoint = NSPoint(x: fixture.overlay.panelFrame.maxX + 20, y: memberRect.midY)
+        let drop = fixture.overlay.convert(exitPoint, to: nil)
+        let commitsBefore = fixture.commits.count
+        fixture.overlay.mouseDown(with: pointerEvent(.leftMouseDown, atWindowPoint: down, in: window))
+        fixture.overlay.mouseDragged(with: pointerEvent(.leftMouseDragged, atWindowPoint: drop, in: window))
+        XCTAssertTrue(fixture.overlay.isMoveOutPresentationCollapsed)
+        if case .topLevelTarget = fixture.coordinator.controller.lastIntent {} else {
+            XCTFail("Collapsed panel must not keep a hidden-member insertion marker")
+        }
+        XCTAssertTrue(fixture.coordinator.visuals.isPreviewVisible)
+        XCTAssertNotNil(fixture.coordinator.visuals.previewIconImage)
+        XCTAssertTrue(fixture.coordinator.visuals.visualViewSuperviews[0] === window.contentView)
+        let carried = fixture.coordinator.visuals.previewFrame
+        let pointer = try XCTUnwrap(window.contentView).convert(drop, from: nil)
+        XCTAssertEqual(carried.midX, pointer.x, accuracy: 0.01)
+        XCTAssertEqual(carried.minY, pointer.y + 24, accuracy: 0.01)
+        fixture.overlay.mouseUp(with: pointerEvent(.leftMouseUp, atWindowPoint: drop, in: window))
+        XCTAssertEqual(fixture.commits.count, commitsBefore + 1)
+        XCTAssertNil(fixture.sessionLayout?.folder(id: folderID))
+        XCTAssertEqual(fixture.sessionLayout?.topLevelOrder.first, .app(ref("beta")))
+        XCTAssertTrue(fixture.sessionLayout?.topLevelOrder.contains(.app(ref("alpha"))) == true)
+        XCTAssertFalse(fixture.coordinator.visuals.isPreviewVisible)
+        XCTAssertNil(fixture.overlay.superview)
+        XCTAssertTrue(fixture.launcher.opened.isEmpty)
+        let acceptedWrites = await waitUntil { fixture.enqueued == fixture.commits.count }
+        XCTAssertTrue(acceptedWrites)
+        switch await fixture.store.flush() {
+        case .persisted, .nothingPending: break
+        default: return XCTFail("Move-out commit must persist in the isolated fixture store")
+        }
+        let reloaded = LayoutStoreActor(storeDirectory: fixture.storeDirectory)
+        guard case .loaded(let saved, _) = await reloaded.load() else {
+            return XCTFail("Move-out must survive a fresh store reload")
+        }
+        XCTAssertEqual(saved, fixture.sessionLayout)
+        XCTAssertNil(saved.folder(id: folderID))
+    }
+
     func testTwoMemberFolderMoveOutShowsRemainingAppProxyThenDissolves() async throws {
         let fixture = try await makeFixture()
         defer {
@@ -739,7 +836,7 @@ final class DragCommitIntegrationTests: XCTestCase {
         let initial = PersistentWorkspaceLayout(
             generation: LayoutGeneration(1),
             topLevelOrder: [.folder(folderID), .app(ref("delta")),
-                            .app(ref("echo")), .app(ref("foxtrot"))],
+                            .app(ref("echo")), .app(ref("foxtrot")), .app(ref("gamma"))],
             folders: [PersistentFolderRecord(id: folderID, title: "Group 1",
                                              members: [ref("alpha"), ref("beta")])])
         fixture.coordinator.onCommit(initial)
@@ -756,12 +853,29 @@ final class DragCommitIntegrationTests: XCTestCase {
                 .first { ($0.bindingToken?.appID as? FolderID) == folderID })
         let down = windowPoint(of: memberCell)
         let pageView = try XCTUnwrap(fixture.assembly.renderer.pageView(forPage: 0))
-        let topFrames = pageView.dragItemFrames(convertedTo: fixture.surface,
-                                                 catalog: fixture.assembly.provider.servedSnapshot)
-        // 右侧页边距同时位于顶层行带内、Folder panel 外：保证真实 move-out
-        // 越界回调触发，并让 A 落到 B 之后，B 保持 Folder 原顶层位置。
-        let landingInSurface = NSPoint(x: fixture.overlay.panelFrame.maxX + 40,
-                                       y: topFrames[0].frame.y + topFrames[0].frame.height / 2)
+        let catalog = fixture.assembly.provider.servedSnapshot
+        let topFrames = pageView.dragItemFrames(convertedTo: fixture.surface, catalog: catalog)
+        let memberFrames = fixture.overlay.memberDragItemFrames(convertedTo: fixture.surface,
+                                                                  catalog: catalog)
+        let memberMinY = memberFrames.map(\.frame.minY).min() ?? 0
+        let memberMaxY = memberFrames.map(\.frame.maxY).max() ?? 0
+        // 行带优先契约：落点 Y 必须离开成员行带，同时仍落在某条顶层行带内（isTopLevelLanding）。
+        // 优先选与成员行带竖直分离的顶层帧；找不到时再退到成员带外最近顶层中线。
+        let separatedTop = topFrames.first {
+            $0.frame.maxY < memberMinY - 1 || $0.frame.minY > memberMaxY + 1
+        }
+        let landingY: Double
+        if let separatedTop {
+            landingY = separatedTop.frame.y + separatedTop.frame.height / 2
+        } else if let anyTop = topFrames.first {
+            landingY = memberMinY > anyTop.frame.minY
+                ? min(memberMinY - 4, anyTop.frame.maxY)
+                : max(memberMaxY + 4, anyTop.frame.minY)
+        } else {
+            landingY = memberMinY - 20
+        }
+        // 右侧页边距 + 成员行带外顶层缝隙：真实 move-out，A 落到 B 之后。
+        let landingInSurface = NSPoint(x: fixture.surface.bounds.maxX - 4, y: landingY)
         let landingInWindow = fixture.surface.convert(landingInSurface, to: nil)
 
         fixture.overlay.mouseDown(with: pointerEvent(.leftMouseDown,
@@ -780,7 +894,8 @@ final class DragCommitIntegrationTests: XCTestCase {
                        "代理必须精确覆盖真实 Folder cell frame")
         XCTAssertEqual(proxy.boundName, remainingCell.boundName)
         if let proxyImage = proxy.iconView.image, let remainingImage = remainingCell.iconView.image {
-            XCTAssertTrue(proxyImage === remainingImage, "代理应复用剩余成员现有图标")
+            XCTAssertEqual(proxyImage.tiffRepresentation, remainingImage.tiffRepresentation,
+                           "Production pre-collapse capture retains the survivor icon pixels durably")
         } else {
             XCTFail("剩余成员与代理都应有 fixture 图标")
         }
@@ -958,6 +1073,48 @@ final class DragCommitIntegrationTests: XCTestCase {
     /// census 链段计数断言 + Path A（surface 启动识别器）抑制/恢复状态断言。
     /// 「仍未建模层」清单见结果文件 §Stage1.4（真 handleDragCellClick 方法体、AppSearchController、
     /// key-window/全屏传递、真实 NSWorkspace 启动）。
+    /// Actual visible icon edge, not the unrelated central third of the cell.
+    /// Synthetic pointer delivery exercises runtime geometry and the shared commit path.
+    func testDropInsideVisibleIconCreatesFolderRatherThanReordering() async throws {
+        let fixture = try await makeFixture()
+        defer {
+            DragUISessionCoordinator.shared = nil
+            fixture.coordinator.teardown()
+            fixture.assembly.teardown()
+            fixture.surface.teardown()
+        }
+        let (window, _, _) = try mountInQuitWindow(fixture)
+        let page = try XCTUnwrap(fixture.assembly.renderer.pageView(forPage: 0))
+        let source = try XCTUnwrap(page.cell(at: 0))
+        let target = try XCTUnwrap(page.cell(at: 1))
+        let down = source.iconView.convert(NSPoint(x: source.iconView.bounds.midX,
+                                                   y: source.iconView.bounds.midY), to: nil)
+        let localDrop = NSPoint(x: target.iconView.frame.minX + 2,
+                                y: target.iconView.frame.midY)
+        XCTAssertTrue(target.acceptsLaunchHit(at: localDrop))
+        let drop = target.convert(localDrop, to: nil)
+        let surfaceDrop = fixture.surface.convert(drop, from: nil)
+        let cellFrame = target.convert(target.bounds, to: fixture.surface)
+        XCTAssertNotEqual(DropZoneGeometry.hitZone(
+            pointer: .init(x: surfaceDrop.x, y: surfaceDrop.y),
+            frame: .init(x: cellFrame.minX, y: cellFrame.minY,
+                         width: cellFrame.width, height: cellFrame.height),
+            margin: DragParameters.default.dropZoneMarginsPT), .center,
+            "Regression point must demonstrate the previous cell-center miss")
+        source.mouseDown(with: pointerEvent(.leftMouseDown, atWindowPoint: down, in: window))
+        source.mouseDragged(with: pointerEvent(.leftMouseDragged, atWindowPoint: drop, in: window))
+        XCTAssertEqual(fixture.coordinator.controller.lastIntent, .createFolder(target: ref("beta")))
+        XCTAssertTrue(fixture.coordinator.visuals.isCreateFolderIndicatorVisible)
+        XCTAssertFalse(fixture.coordinator.visuals.isInsertionIndicatorVisible)
+        source.mouseUp(with: pointerEvent(.leftMouseUp, atWindowPoint: drop, in: window))
+        XCTAssertFalse(fixture.coordinator.visuals.isCreateFolderIndicatorVisible)
+        XCTAssertEqual(fixture.commits.count, 1)
+        let layout = try XCTUnwrap(fixture.commits.first)
+        XCTAssertEqual(layout.folders.count, 1)
+        XCTAssertEqual(layout.folders.first?.members, [ref("beta"), ref("alpha")])
+        XCTAssertTrue(fixture.launcher.opened.isEmpty, "Dragging must not launch either app")
+    }
+
     func testFullChainRealPointerSessionCreateFolderThenCellMouseDownLaunches() async throws {
         let fixture = try await makeFixture()
         defer {
@@ -1233,7 +1390,8 @@ final class DragCommitIntegrationTests: XCTestCase {
         XCTAssertEqual(fixture.coordinator.controller.state, .pressed)
 
         // 2) 无 up：sourceCell 合法但布局已不含该 app（stale source）→ controller
-        //    secondDrag cancel（归 idle）→ 保持仲裁 → 抑制仍 true + 无活会话 = 纯滞留态。
+        //    The controller returns idle, but the stale click fallback still owns the
+        //    physical pointer. Suppression is legitimate until the release boundary.
         fixture.sessionLayout = PersistentWorkspaceLayout(
             generation: LayoutGeneration(9),
             topLevelOrder: [.app(ref("gamma")), .app(ref("delta")), .app(ref("echo")),
@@ -1242,12 +1400,13 @@ final class DragCommitIntegrationTests: XCTestCase {
         cell.mouseDown(with: pointerEvent(.leftMouseDown, atWindowPoint: point, in: window))
         XCTAssertEqual(fixture.coordinator.controller.state, .idle, "stale secondDrag → controller 归 idle")
         XCTAssertEqual(ClickCensus.count(ClickCensus.Sink.fallbackArmed), 1, "stale source 回退武装（census）")
-        XCTAssertFalse(fixture.coordinator.isSessionActive, "无活会话（controller idle + 无空白候选）")
+        XCTAssertTrue(fixture.coordinator.isSessionActive,
+                      "An idle controller's fallback still owns the physical pointer until release")
 
-        // 3) 下一次 pointerDown 入口 → s9_leak 计数（抑制滞留观测点）。
+        // 3) A replacing down is not ownerless suppression residency while input is held.
         cell.mouseDown(with: pointerEvent(.leftMouseDown, atWindowPoint: point, in: window))
-        XCTAssertEqual(ClickCensus.count(ClickCensus.Sink.suppressionResident), 1,
-                       "抑制滞留在入口被观测（N1 census）")
+        XCTAssertEqual(ClickCensus.count(ClickCensus.Sink.suppressionResident), 0,
+                       "Held fallback arbitration is not ownerless suppression residency")
         XCTAssertFalse(recognizer.isEnabled, "滞留窗口内 Path A 仍死")
 
         // 4) pointerUp → fallback 分支 endSession 自愈 + click 回退派发（Defect-3 健康形态）。

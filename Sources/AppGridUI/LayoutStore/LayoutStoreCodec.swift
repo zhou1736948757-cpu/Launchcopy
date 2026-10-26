@@ -91,6 +91,11 @@ struct WorkspaceLayoutEnvelopeV1: Codable, Equatable {
     var checksum: String?
 }
 
+/// Dispatch versions without requiring a future document to retain the v1 shape.
+private struct WorkspaceLayoutVersionHeader: Decodable {
+    let schemaVersion: Int
+}
+
 // MARK: - codec
 
 /// schema v1 codec + validator（确定性；无状态）。
@@ -117,7 +122,9 @@ public enum LayoutStoreCodec {
         let digest = SHA256.hash(data: payload)
         var full = envelope
         full.checksum = hexDigest(digest)
-        return try encodePayload(full)
+        let data = try encodePayload(full)
+        guard data.count <= maxFileBytes else { throw LayoutStoreCodecError.overLimit }
+        return data
     }
 
     // MARK: decode
@@ -125,6 +132,10 @@ public enum LayoutStoreCodec {
     /// 解码 + 校验：大小上限 → JSON 解析 → 版本 → 校验和 → 结构 → 上限 → 域不变量。
     public static func decode(_ data: Data) -> LayoutStoreDecodeResult {
         guard data.count <= maxFileBytes else { return .overLimit }
+        guard let header = try? JSONDecoder().decode(WorkspaceLayoutVersionHeader.self, from: data) else {
+            return .corrupt
+        }
+        if header.schemaVersion > schemaVersion { return .unknownFutureVersion(header.schemaVersion) }
         guard let envelope = try? JSONDecoder().decode(WorkspaceLayoutEnvelopeV1.self, from: data) else {
             return .corrupt
         }

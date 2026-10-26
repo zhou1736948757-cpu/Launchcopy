@@ -197,6 +197,94 @@ final class FolderOverlayTests: XCTestCase {
         XCTAssertFalse(activated, "面板内非成员区不激活")
     }
 
+    func testVisualOnlyModeSuppressesInputAndRestoresCallbacks() async throws {
+        let loader = GatedIconLoader()
+        let (overlay, pipeline) = makeOverlay(loader: loader)
+        defer { pipeline.shutdown() }
+
+        let ids = makeIDs(1)
+        let map = nameMap(ids)
+        let entry = makeEntry(members: ids)
+        overlay.configure(entry: entry, innerPage: 0, reduceMotion: false) { map[$0] }
+        overlay.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        overlay.layout()
+
+        var activated: AppID?
+        var closeCount = 0
+        var pageChanges = 0
+        overlay.onActivateMember = { activated = $0 }
+        overlay.onRequestClose = { closeCount += 1 }
+        overlay.onInnerPageChange = { _ in pageChanges += 1 }
+
+        overlay.setVisualOnly(true)
+        XCTAssertTrue(overlay.isVisualOnly)
+        XCTAssertNil(overlay.hitTest(NSPoint(x: 5, y: 5)), "退出视觉层不参与 hit-test")
+
+        overlay.handleClick(at: NSPoint(x: 5, y: 5))
+        overlay.prevPage()
+        overlay.nextPage()
+        XCTAssertNil(activated, "退出视觉层不激活成员")
+        XCTAssertEqual(closeCount, 0, "退出视觉层不关闭文件夹")
+        XCTAssertEqual(pageChanges, 0, "退出视觉层不翻内部页")
+
+        // 恢复后 callback 身份不丢失，且当前内容仍可交互。
+        overlay.setVisualOnly(false)
+        XCTAssertFalse(overlay.isVisualOnly)
+        let cell = try XCTUnwrap(overlay.memberCell(at: 0))
+        let cellCenter = NSPoint(x: overlay.panelFrame.minX + cell.frame.midX,
+                                 y: overlay.panelFrame.minY + cell.frame.midY)
+        overlay.handleClick(at: cellCenter)
+        XCTAssertEqual(activated, ids[0], "恢复交互后成员 callback 回来")
+    }
+
+    func testVisualOnlySuppressesLateIconWriteAndRebindsOnResume() async throws {
+        let loader = GatedIconLoader()
+        let (overlay, pipeline) = makeOverlay(loader: loader)
+        defer { pipeline.shutdown() }
+
+        let ids = makeIDs(1)
+        let entry = makeEntry(members: ids)
+        overlay.configure(entry: entry, innerPage: 0, reduceMotion: false) { _ in "Member" }
+        await waitForPendingLoads(loader, count: 1)
+        let key = IconKey(identity: IconIdentity.from(appID: ids[0]), pointSize: 32, displayScale: 1)
+        let oldImage = makeIconImage(r: 220, g: 0, b: 0)
+
+        overlay.setVisualOnly(true)
+        loader.complete(key: key, image: oldImage)
+        await Task.yield()
+        XCTAssertNil(overlay.memberCell(at: 0)?.iconView.image,
+                     "visual-only 期间的 one-shot 图标结果不写入冻结视图")
+
+        overlay.setVisualOnly(false)
+        await waitForPendingLoads(loader, count: 1)
+        let resumedImage = makeIconImage(r: 0, g: 180, b: 0)
+        loader.complete(key: key, image: resumedImage)
+        await Task.yield()
+        XCTAssertNotNil(overlay.memberCell(at: 0)?.iconView.image,
+                        "恢复交互后重新绑定并接收图标")
+    }
+
+    func testClearContentRestoresMoveOutStateWhileVisualOnly() async throws {
+        let loader = GatedIconLoader()
+        let (overlay, pipeline) = makeOverlay(loader: loader)
+        defer { pipeline.shutdown() }
+
+        overlay.configure(entry: makeEntry(members: makeIDs(2)), innerPage: 0, reduceMotion: false) { _ in
+            "Member"
+        }
+        overlay.setMoveOutPresentationCollapsed(true)
+        XCTAssertTrue(overlay.isMoveOutPresentationCollapsed)
+
+        // This is the retained exit-visual cleanup order used by AppDelegate: freeze first,
+        // then clear after the visual has been detached.
+        overlay.setVisualOnly(true)
+        overlay.clearContent()
+
+        XCTAssertFalse(overlay.isMoveOutPresentationCollapsed,
+                       "清空冻结退出视觉后不得把折叠状态带到下一次复用")
+        XCTAssertNil(overlay.currentEntry)
+    }
+
     // MARK: - teardown 零写回
 
     func testTeardownZeroCallbacks() async throws {
@@ -233,7 +321,7 @@ final class FolderOverlayTests: XCTestCase {
     func testReduceMotionParams() {
         XCTAssertEqual(FolderOverlayView.MotionParams.forReduceMotion(true), .reduceMotion)
         XCTAssertEqual(FolderOverlayView.MotionParams.forReduceMotion(false), .standard)
-        XCTAssertEqual(FolderOverlayView.MotionParams.reduceMotion.duration, 0, "RM：零时长")
+        XCTAssertEqual(FolderOverlayView.MotionParams.reduceMotion.duration, 0.18, "RM：180ms 淡入淡出")
         XCTAssertEqual(FolderOverlayView.MotionParams.reduceMotion.scale, 1, "RM：无缩放")
         XCTAssertEqual(FolderOverlayView.MotionParams.reduceMotion.displacement, 0, "RM：无位移")
         XCTAssertGreaterThan(FolderOverlayView.MotionParams.standard.duration, 0, "标准：短时动画")

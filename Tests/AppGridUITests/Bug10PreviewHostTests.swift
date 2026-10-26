@@ -98,10 +98,18 @@ final class Bug10PreviewHostTests: XCTestCase {
     }
 
     /// folder scope 几何：成员帧 + 顶层帧**均 convert 到 overlay 系**（makeDragGeometry 契约）。
+    /// 成员行带故意放在 y=200（与顶层 y=0 分离）：classifier 在成员行带内一律 insertion，
+    /// move-out 顶层落点测试必须把指针放到行带外（与 2026-09 行带优先契约一致）。
     private func folderScopeGeometry(folderID: FolderID, page: Int = 0, pageCount: Int = 2) -> DragGeometry {
-        folderGeometry(memberFrames: rowFrames([.app(ref("app1")), .app(ref("app2"))]),
-                       topLevelFrames: [folderFrame(folderID, x: 0)],
-                       containerWidth: 400, page: page, pageCount: pageCount)
+        let members: [DragItemFrame] = [
+            DragItemFrame(identity: .app(ref("app1")),
+                          frame: DragRect(x: 0, y: 200, width: 80, height: 80)),
+            DragItemFrame(identity: .app(ref("app2")),
+                          frame: DragRect(x: 100, y: 200, width: 80, height: 80)),
+        ]
+        return folderGeometry(memberFrames: members,
+                              topLevelFrames: [folderFrame(folderID, x: 0)],
+                              containerWidth: 400, page: page, pageCount: pageCount)
     }
 
     /// 断言：所有已挂载视觉视图的父视图 === host（未挂载的保持 nil）。
@@ -286,15 +294,15 @@ final class Bug10PreviewHostTests: XCTestCase {
         // folder scope：成员帧 + 顶层帧均 convert 到 overlay 系（makeDragGeometry 契约）
         coordinator.geometryProvider = { _ in self.folderScopeGeometry(folderID: folderID) }
 
-        // 成员按下（overlay 系 (40,40)：窗口 (140,90)）
-        coordinator.pointerDown(locationInWindow: NSPoint(x: 140, y: 90),
+        // 成员按下仍在成员行带内（overlay 系 (40,240)：窗口 (140,290)）以便 arm 位移。
+        coordinator.pointerDown(locationInWindow: NSPoint(x: 140, y: 290),
                                 sourceCell: memberCell, memberFolderID: folderID)
-        // 位移 30pt ≥ 24 → moveOutArmed（overlay 系 (70,40)：窗口 (170,90)）
-        coordinator.pointerDragged(locationInWindow: NSPoint(x: 170, y: 90))
+        // 位移 30pt ≥ 24 → moveOutArmed（仍在成员行带 y∈[200,280]）
+        coordinator.pointerDragged(locationInWindow: NSPoint(x: 170, y: 290))
         XCTAssertEqual(coordinator.controller.state, .dragging)
         XCTAssertTrue(coordinator.controller.moveOutArmed, "move-out 显式 arm")
 
-        // 拖到顶层缝隙（overlay 系 (200,40)：窗口 (300,90)；顶层帧 [folderFrame(x:0)] 之外）
+        // 拖到顶层行带且离开成员行带（overlay 系 (200,40)：窗口 (300,90)）
         coordinator.pointerDragged(locationInWindow: NSPoint(x: 300, y: 90))
         XCTAssertTrue(coordinator.visuals.isInsertionIndicatorVisible, "move-out 顶层落点 → 顶层蓝条")
         // 顶层蓝条 = 顶层帧末右缘（overlay 系）：x = 0 + 80 − 3 = 77

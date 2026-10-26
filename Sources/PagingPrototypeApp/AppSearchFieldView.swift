@@ -9,12 +9,14 @@
 // 隐私：不记录 query 原文 / 结果 app 名 / bundle ID / 路径 / URL / 图标数据。
 
 import AppKit
+import LauncherLocalization
 
 /// 中性搜索框视图：公开 AppKit NSSearchField，无品牌、无预填、无历史、无持久化。
 public final class AppSearchFieldView: NSSearchField {
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        LauncherSearchHeader.configure(self)
         // 中性可访问 label（§7.1）。
         setAccessibilityLabel("Search applications")
         // 中性占位文本（不含任何用户输入/身份信息）。
@@ -24,6 +26,13 @@ public final class AppSearchFieldView: NSSearchField {
     @available(*, unavailable)
     public required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    /// Does not touch query text, responder, delegate or field-editor selection.
+    @MainActor
+    public func relabel(strings: LocalizedStrings) {
+        placeholderString = strings.text(.searchPlaceholder)
+        setAccessibilityLabel(strings.text(.searchAccessibility))
     }
 
     /// 空白点击分类 helper（ADR-007 §2.7）：命中视图链（含 field editor / clear button /

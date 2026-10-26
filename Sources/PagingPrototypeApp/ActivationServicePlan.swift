@@ -32,6 +32,7 @@ public enum ActivationServiceTransition: Equatable, Sendable {
     case restartShortcut(ShortcutSpec)
     case startFourFinger
     case stopFourFinger
+    case setFourFingerOutwardHide(enabled: Bool)
 }
 
 /// 由偏好派生的服务计划（nil/off = 不运行）。
@@ -39,21 +40,26 @@ public struct ActivationServicePlan: Equatable, Sendable {
     public var hotCorner: HotCorner?
     public var globalShortcut: ShortcutSpec?
     public var fourFingerEnabled: Bool
+    public var fourFingerOutwardHideEnabled: Bool
 
     public init(hotCorner: HotCorner? = nil,
                 globalShortcut: ShortcutSpec? = nil,
-                fourFingerEnabled: Bool = false) {
+                fourFingerEnabled: Bool = false,
+                fourFingerOutwardHideEnabled: Bool = false) {
         self.hotCorner = hotCorner
         self.globalShortcut = globalShortcut
         self.fourFingerEnabled = fourFingerEnabled
+        self.fourFingerOutwardHideEnabled = fourFingerOutwardHideEnabled
     }
 
     /// 从偏好派生：仅已启用的 trigger 进入计划
     /// （hotCornerEnabled 且选了 corner 才运行；globalShortcutEnabled 且有 spec 才运行）。
-    public init(settings: ActivationSettings, fourFingerEnabled: Bool) {
+    public init(settings: ActivationSettings, fourFingerEnabled: Bool,
+                fourFingerOutwardHideEnabled: Bool = false) {
         hotCorner = settings.hotCornerEnabled ? settings.selectedCorner : nil
         globalShortcut = settings.globalShortcutEnabled ? settings.shortcut : nil
         self.fourFingerEnabled = fourFingerEnabled
+        self.fourFingerOutwardHideEnabled = fourFingerOutwardHideEnabled
     }
 
     /// 应用一条转换（确定性；restart 语义 = 停旧启新，计划字段直接落到目标值）。
@@ -71,6 +77,8 @@ public struct ActivationServicePlan: Equatable, Sendable {
             fourFingerEnabled = true
         case .stopFourFinger:
             fourFingerEnabled = false
+        case .setFourFingerOutwardHide(let enabled):
+            fourFingerOutwardHideEnabled = enabled
         }
     }
 }
@@ -93,6 +101,10 @@ public enum ActivationServicePlanDiff {
         }
         if old.fourFingerEnabled && !new.fourFingerEnabled {
             result.append(.stopFourFinger)
+        }
+
+        if old.fourFingerOutwardHideEnabled != new.fourFingerOutwardHideEnabled {
+            result.append(.setFourFingerOutwardHide(enabled: new.fourFingerOutwardHideEnabled))
         }
 
         // 2) restarts（值变更：先停旧服务再启新服务）

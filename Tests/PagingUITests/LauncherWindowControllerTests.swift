@@ -12,6 +12,20 @@ import XCTest
 @testable import PagingPrototypeApp
 
 @MainActor
+private final class BackgroundUITestWindow: NSWindow {
+    private(set) var keyAndFrontRequests = 0
+    private(set) var backRequests = 0
+    override func makeKeyAndOrderFront(_ sender: Any?) {
+        keyAndFrontRequests += 1
+        super.makeKeyAndOrderFront(sender)
+    }
+    override func orderBack(_ sender: Any?) {
+        backRequests += 1
+        super.orderBack(sender)
+    }
+}
+
+@MainActor
 final class LauncherWindowControllerTests: XCTestCase {
 
     private let screenA = ScreenID(index: 0)
@@ -54,6 +68,43 @@ final class LauncherWindowControllerTests: XCTestCase {
     }
 
     // MARK: - present → visible complete
+
+    func testBackgroundUIModePreservesFrameAndDoesNotRequestKeyOrHideChrome() {
+        _ = NSApplication.shared
+        let originalChrome = NSApp.presentationOptions
+        let controller = makeController(reduceMotion: false)
+        XCTAssertFalse(controller.backgroundUITestMode)
+        controller.backgroundUITestMode = true
+        let window = BackgroundUITestWindow(
+            contentRect: NSRect(x: 40, y: 80, width: 700, height: 500),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false
+        )
+        window.contentView = NSView(frame: window.contentLayoutRect)
+        window.isReleasedWhenClosed = false
+        let originalFrame = window.frame
+        controller.attach(window: window)
+        _ = controller.show(source: .testHarness, targetScreen: screenA)
+        XCTAssertEqual(window.frame, originalFrame)
+        XCTAssertTrue(window.styleMask.contains(.titled))
+        XCTAssertFalse(window.styleMask.contains(.fullScreen))
+        XCTAssertEqual(window.collectionBehavior, [])
+        XCTAssertEqual(window.level, .normal)
+        XCTAssertEqual(window.keyAndFrontRequests, 0)
+        XCTAssertEqual(window.backRequests, 1)
+        XCTAssertEqual(NSApp.presentationOptions, originalChrome)
+        XCTAssertEqual(window.contentView?.frame.size, window.contentLayoutRect.size)
+        XCTAssertEqual(controller.coordinator.activeRequestID, 0)
+
+        _ = controller.hide(source: .testHarness, reason: .escape)
+        XCTAssertFalse(window.isVisible)
+        let resized = NSRect(x: 100, y: 120, width: 720, height: 540)
+        window.setFrame(resized, display: false)
+        _ = controller.show(source: .testHarness, targetScreen: screenA)
+        XCTAssertEqual(window.frame, resized)
+        XCTAssertEqual(window.keyAndFrontRequests, 0)
+        XCTAssertEqual(window.backRequests, 2)
+        XCTAssertEqual(NSApp.presentationOptions, originalChrome)
+    }
 
     func testPresentBecomesVisibleAndCoversTargetFrame() {
         let controller = makeController(reduceMotion: true)

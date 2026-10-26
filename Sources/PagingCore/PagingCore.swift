@@ -206,6 +206,40 @@ public final class PagingCore {
         return finishGesture(timestamp: timestamp)
     }
 
+    /// Discrete pointer navigation. Tracking (including release wait/glide) stays untouched.
+    public var isDirectNavigationActive: Bool {
+        state == .settling && activeTransition?.isDirectNavigation == true
+    }
+
+    public func canRequestPage(_ targetPage: Int) -> Bool {
+        guard !isTearingDown, pageCount > 0, state == .idle || state == .settling else { return false }
+        let target = clampToValidPage(targetPage)
+        if state == .idle { return target != committedPage }
+        return !(isDirectNavigationActive && activeTransition?.targetPage == target)
+    }
+
+    /// Uses the same spring and synchronously mirrored visual offset; no synthetic input.
+    @discardableResult
+    public func requestPage(_ targetPage: Int, timestamp: TimeInterval = 0) -> Bool {
+        guard canRequestPage(targetPage), timestamp.isFinite, visualOffset.isFinite else { return false }
+        let target = clampToValidPage(targetPage)
+        let offset = visualOffset
+        let previousToken = transitionToken
+        let previousState = state
+        let domain = (pageCount, pageWidth, reduceMotion)
+        if activeTransition != nil { abandonActiveTransition() }
+        // A stale observer may tear down or issue a newer request synchronously.
+        guard !isTearingDown, transitionToken == previousToken, state == previousState else { return false }
+        guard pageCount == domain.0, pageWidth == domain.1, reduceMotion == domain.2, visualOffset == offset else {
+            cancel() // Changed environment owns the cancellation, never the cached target.
+            return false
+        }
+        currentSession = nil
+        beginSettle(targetPage: target, fromOffset: offset, reason: .directNavigation,
+                    createdAt: timestamp, isDirectNavigation: true)
+        return true
+    }
+
     // MARK: - 动画驱动（D2：手动插值；UI display link 每帧调用）
 
     /// 推进一帧（settle 插值或惯性滑行）。
@@ -247,6 +281,7 @@ public final class PagingCore {
             return false
         }
         // 自然完成：commit 到 targetPage。
+        let completedToken = transitionToken
         committedPage = transition.targetPage
         visualOffset = Double(transition.targetPage)
         transition.markCommitted()
@@ -254,8 +289,12 @@ public final class PagingCore {
         springVelocity = 0
         commitCount += 1
         fireOffsetChangeIfChanged()
-        events.onCommit?(transition)
-        setState(.idle)
+        if !isTearingDown { events.onCommit?(transition) }
+        // An outward offset/commit observer can synchronously accept a new target.
+        // Do not strand its context by publishing the previous transition's idle.
+        if !isTearingDown, transitionToken == completedToken, activeTransition == nil, state == .settling {
+            setState(.idle)
+        }
         return true
     }
 
@@ -267,6 +306,8 @@ public final class PagingCore {
         guard !isTearingDown else { return }
         let safeWidth = max(newWidth, Self.minimumPageWidth)
         guard safeWidth != pageWidth else { return }
+        if isDirectNavigationActive { cancel() }
+        guard !isTearingDown else { return }
         let oldWidth = pageWidth
         pageWidth = safeWidth
 
@@ -298,6 +339,8 @@ public final class PagingCore {
         guard !isTearingDown else { return }
         let count = max(newCount, 0)
         guard count != pageCount else { return }
+        if isDirectNavigationActive { cancel() }
+        guard !isTearingDown else { return }
         pageCount = count
 
         if count == 0 {
@@ -353,9 +396,14 @@ public final class PagingCore {
         if state == .settling, let ctx = activeTransition {
             // 正在动画：用新参数重启（旧动画作废；token 机制不变）。
             let target = ctx.targetPage
+            let token = transitionToken
+            let domain = (pageCount, pageWidth)
             abandonActiveTransition()
+            guard !isTearingDown, transitionToken == token, state == .settling, activeTransition == nil else { return }
+            guard pageCount == domain.0, pageWidth == domain.1, reduceMotion == enabled else { cancel(); return }
             springVelocity = 0
-            beginSettle(targetPage: target, fromOffset: visualOffset, reason: .reduceMotionChange, createdAt: Date().timeIntervalSince1970)
+            beginSettle(targetPage: target, fromOffset: visualOffset, reason: .reduceMotionChange, createdAt: Date().timeIntervalSince1970,
+                        isDirectNavigation: ctx.isDirectNavigation)
         }
     }
 
@@ -365,16 +413,22 @@ public final class PagingCore {
     public func cancel() {
         guard !isTearingDown else { return }
         let hadActivity = activeTransition != nil || state == .tracking
+        let token = transitionToken
+        let previousState = state
         if activeTransition != nil {
             abandonActiveTransition()
+            // A stale observer's newer request or teardown is an independent owner.
+            guard !isTearingDown, transitionToken == token, state == previousState, activeTransition == nil else { return }
         }
         currentSession = nil
         springVelocity = 0
         committedPage = min(committedPage, max(pageCount - 1, 0))
         visualOffset = Double(committedPage)
         fireOffsetChangeIfChanged()
+        guard !isTearingDown, transitionToken == token, activeTransition == nil, state == previousState else { return }
         if hadActivity || state != .idle {
             setState(.cancelled)
+            guard !isTearingDown, transitionToken == token, activeTransition == nil, state == .cancelled else { return }
             setState(.idle)
         }
     }
@@ -404,7 +458,7 @@ public final class PagingCore {
         switch state {
         case .settling:
             // D4：同步接管——旧动画作废，新会话以当前显示位置为起点（不跳回旧起点/目标）。
-            interruptActiveTransition(takeoverOffset: visualOffset)
+            guard interruptActiveTransition(takeoverOffset: visualOffset) else { return false }
             startSession(offset: visualOffset, timestamp: timestamp)
             setState(.tracking)
             return true
@@ -508,25 +562,31 @@ public final class PagingCore {
 
     // MARK: - 私有：settle / 中断 / 边界 / 滑行
 
-    private func beginSettle(targetPage: Int, fromOffset: Double, reason: SettleReason, createdAt: TimeInterval) {
+    private func beginSettle(targetPage: Int, fromOffset: Double, reason: SettleReason, createdAt: TimeInterval,
+                             isDirectNavigation: Bool = false) {
+        guard !isTearingDown, pageCount > 0, targetPage >= 0, targetPage < pageCount else { return }
         transitionToken &+= 1
         let ctx = TransitionContext(
             token: transitionToken,
             targetPage: targetPage,
             fromOffset: fromOffset,
             reason: reason,
-            createdAt: createdAt
+            createdAt: createdAt,
+            isDirectNavigation: isDirectNavigation
         )
         activeTransition = ctx
         springVelocity = 0
         setState(.settling)
+        guard ownsTransition(ctx) else { return }
         events.onTransitionBegin?(ctx)
+        guard ownsTransition(ctx) else { return }
 
         let duration = parameters.effectiveSettleDuration(reduceMotion: reduceMotion)
         if duration <= 0.001 {
             // RM：即刻提交（D8：参数降级，token/状态机逻辑不变）。
             visualOffset = Double(targetPage)
             fireOffsetChangeIfChanged()
+            guard ownsTransition(ctx) else { return }
             _ = completeSettle(ctx)
         } else if abs(fromOffset - Double(targetPage)) < Self.positionEpsilon {
             // 已在目标位（无位移回弹）→ 立即自然完成（避免无意义动画）。
@@ -534,20 +594,36 @@ public final class PagingCore {
         }
     }
 
-    private func interruptActiveTransition(takeoverOffset: Double) {
-        guard let ctx = activeTransition else { return }
+    private func ownsTransition(_ context: TransitionContext) -> Bool {
+        !isTearingDown && state == .settling && activeTransition === context
+            && context.commitState == .pending && context.token == transitionToken
+    }
+
+    /// External observers may synchronously revoke this takeover. Only the same
+    /// token/session and expected transient state may continue after each callback.
+    private func interruptActiveTransition(takeoverOffset: Double) -> Bool {
+        guard let ctx = activeTransition else { return false }
+        let token = transitionToken
+        let session = currentSession
+        func ownsContinuation(in expectedState: PagingState) -> Bool {
+            !isTearingDown && transitionToken == token && activeTransition == nil
+                && currentSession === session && state == expectedState
+        }
         ctx.markStale()
         activeTransition = nil
         springVelocity = 0
         staleRejectionCount += 1
         interruptionCount += 1
         events.onStaleRejection?(ctx.token)
+        guard ownsContinuation(in: .settling) else { return false }
         events.onInterruption?(PagingInterruption(
             takeoverOffset: takeoverOffset,
             abandonedTargetPage: ctx.targetPage,
             abandonedToken: ctx.token
         ))
+        guard ownsContinuation(in: .settling) else { return false }
         setState(.interrupted)
+        return ownsContinuation(in: .interrupted)
     }
 
     private func abandonActiveTransition() {

@@ -190,6 +190,204 @@ final class B1ManualDeliveryTests: XCTestCase {
         XCTAssertEqual(counter.count, 2, "新一轮闭环恢复")
     }
 
+    func testCompletedFallbackReleaseCannotClearReentrantCaptureEvenOnTheSameCell() {
+        for sameCell in [true, false] {
+            ClickCensus.resetForTesting()
+            let (window, probe, first) = makeWindowWithCell()
+            let second = sameCell ? first : AppGridCellView(frame: NSRect(x: 220, y: 20, width: 80, height: 80))
+            if !sameCell { probe.addSubview(second) }
+            probe.layoutSubtreeIfNeeded()
+            let coordinator = DragUISessionCoordinator(host: probe)
+            first.dragCoordinator = coordinator; second.dragCoordinator = coordinator
+            var recognitionEnabled = true
+            coordinator.clickRecognitionSuppressor = { recognitionEnabled = $0 }
+            defer { coordinator.teardown() }
+            let firstPoint = NSPoint(x: 60, y: 60)
+            let secondPoint = sameCell ? firstPoint : NSPoint(x: 260, y: 60)
+            var clicked: [ObjectIdentifier] = []
+            coordinator.onCellClick = { cell in
+                clicked.append(ObjectIdentifier(cell))
+                if clicked.count == 1 {
+                    window.sendEvent(self.mouseEvent(.leftMouseDown, at: secondPoint, in: window))
+                }
+            }
+            window.sendEvent(mouseEvent(.leftMouseDown, at: firstPoint, in: window))
+            window.sendEvent(mouseEvent(.leftMouseUp, at: firstPoint, in: window))
+            XCTAssertTrue(coordinator.isSessionActive, "The reentrant press owns the next release")
+            window.sendEvent(mouseEvent(.leftMouseUp, at: secondPoint, in: window))
+            XCTAssertEqual(clicked, [ObjectIdentifier(first), ObjectIdentifier(second)])
+            XCTAssertFalse(coordinator.isSessionActive)
+            XCTAssertTrue(recognitionEnabled)
+        }
+    }
+
+    func testOrdinaryClickCleanupCannotClearReentrantCoordinatorPress() async throws {
+        let (fixture, _) = try await mountedB1Fixture()
+        defer { teardownFixture(fixture) }
+        let page = try XCTUnwrap(fixture.assembly.renderer.pageView(forPage: 0))
+        let first = try XCTUnwrap(page.cell(at: 0)), second = try XCTUnwrap(page.cell(at: 1))
+        let firstPoint = windowPoint(of: first), secondPoint = windowPoint(of: second)
+        var clicked: [ObjectIdentifier] = [], blankClicks = 0
+        var recognitionEnabled = true
+        let suppressor = fixture.coordinator.clickRecognitionSuppressor
+        fixture.coordinator.clickRecognitionSuppressor = { enabled in
+            recognitionEnabled = enabled
+            suppressor?(enabled)
+        }
+        fixture.coordinator.onOverlayBlankClick = { blankClicks += 1 }
+        fixture.coordinator.onCellClick = { [weak coordinator = fixture.coordinator] cell in
+            clicked.append(ObjectIdentifier(cell))
+            if clicked.count == 1 {
+                coordinator?.pointerDown(locationInWindow: secondPoint, sourceCell: second, memberFolderID: nil)
+            }
+        }
+        fixture.coordinator.pointerDown(locationInWindow: firstPoint, sourceCell: first, memberFolderID: nil)
+        fixture.coordinator.pointerUp(locationInWindow: firstPoint)
+        XCTAssertEqual(fixture.coordinator.controller.state, .pressed)
+        XCTAssertFalse(recognitionEnabled)
+        fixture.coordinator.pointerUp(locationInWindow: secondPoint)
+        XCTAssertEqual(clicked, [ObjectIdentifier(first), ObjectIdentifier(second)])
+        XCTAssertEqual(blankClicks, 0, "A newer cell press must not become an overlay-blank click")
+        XCTAssertEqual(fixture.coordinator.controller.state, .idle)
+        XCTAssertTrue(recognitionEnabled)
+    }
+
+    func testWindowAndCoordinatorKeepReentrantClickCaptureAndRecoverForAnotherClick() async throws {
+        let (fixture, window) = try await mountedB1Fixture()
+        defer { teardownFixture(fixture) }
+        let page = try XCTUnwrap(fixture.assembly.renderer.pageView(forPage: 0))
+        let first = try XCTUnwrap(page.cell(at: 0)), other = try XCTUnwrap(page.cell(at: 1))
+        let firstPoint = windowPoint(of: first)
+        for sameCell in [true, false] {
+            let second = sameCell ? first : other
+            let secondPoint = windowPoint(of: second)
+            var clicked: [ObjectIdentifier] = [], blankClicks = 0
+            fixture.coordinator.onOverlayBlankClick = { blankClicks += 1 }
+            fixture.coordinator.onCellClick = { cell in
+                clicked.append(ObjectIdentifier(cell))
+                if clicked.count == 1 {
+                    window.sendEvent(self.mouseEvent(.leftMouseDown, at: secondPoint, in: window))
+                }
+            }
+            window.sendEvent(mouseEvent(.leftMouseDown, at: firstPoint, in: window))
+            window.sendEvent(mouseEvent(.leftMouseUp, at: firstPoint, in: window))
+            XCTAssertEqual(fixture.coordinator.controller.state, .pressed)
+            window.sendEvent(mouseEvent(.leftMouseUp, at: secondPoint, in: window))
+            XCTAssertEqual(clicked, [ObjectIdentifier(first), ObjectIdentifier(second)])
+            XCTAssertEqual(blankClicks, 0)
+            XCTAssertFalse(fixture.coordinator.isSessionActive)
+            window.sendEvent(mouseEvent(.leftMouseUp, at: secondPoint, in: window))
+            XCTAssertEqual(clicked.count, 2, "An unmatched extra release cannot click again")
+            window.sendEvent(mouseEvent(.leftMouseDown, at: firstPoint, in: window))
+            window.sendEvent(mouseEvent(.leftMouseUp, at: firstPoint, in: window))
+            XCTAssertEqual(clicked, [ObjectIdentifier(first), ObjectIdentifier(second), ObjectIdentifier(first)])
+            XCTAssertFalse(fixture.coordinator.isSessionActive)
+        }
+        XCTAssertEqual(fixture.launcher.opened.count, 0, "The callback fixture never launches an application")
+    }
+
+    func testIdleCleanupObserverCannotRetargetCompletedClickToItsNewPress() async throws {
+        let (fixture, _) = try await mountedB1Fixture()
+        defer { teardownFixture(fixture) }
+        let page = try XCTUnwrap(fixture.assembly.renderer.pageView(forPage: 0))
+        let first = try XCTUnwrap(page.cell(at: 0)), second = try XCTUnwrap(page.cell(at: 1))
+        let firstPoint = windowPoint(of: first), secondPoint = windowPoint(of: second)
+        var admitted = false, clicked: [ObjectIdentifier] = []
+        fixture.coordinator.onSessionStateChange = { [weak coordinator = fixture.coordinator] state in
+            guard state == .idle, !admitted else { return }
+            admitted = true
+            coordinator?.pointerDown(locationInWindow: secondPoint, sourceCell: second, memberFolderID: nil)
+        }
+        fixture.coordinator.onCellClick = { clicked.append(ObjectIdentifier($0)) }
+        fixture.coordinator.pointerDown(locationInWindow: firstPoint, sourceCell: first, memberFolderID: nil)
+        fixture.coordinator.pointerUp(locationInWindow: firstPoint)
+        XCTAssertTrue(admitted)
+        XCTAssertEqual(clicked, [ObjectIdentifier(first)])
+        XCTAssertEqual(fixture.coordinator.controller.state, .pressed)
+        fixture.coordinator.pointerUp(locationInWindow: secondPoint)
+        XCTAssertEqual(clicked, [ObjectIdentifier(first), ObjectIdentifier(second)])
+        XCTAssertFalse(fixture.coordinator.isSessionActive)
+    }
+
+    func testClickCleanupTeardownRefusesActivation() async throws {
+        try await assertCleanupInterruptionRefusesActivation(.teardown)
+    }
+
+    func testClickCleanupCancellationRefusesActivation() async throws {
+        try await assertCleanupInterruptionRefusesActivation(.cancel)
+    }
+
+    func testIdleNoOpCancellationDoesNotRevokeCompletedClick() async throws {
+        let (fixture, _) = try await mountedB1Fixture()
+        defer { teardownFixture(fixture) }
+        let cell = try XCTUnwrap(fixture.assembly.renderer.pageView(forPage: 0)?.cell(at: 0))
+        let point = windowPoint(of: cell)
+        var clicks = 0
+        fixture.coordinator.onCellClick = { _ in clicks += 1 }
+        fixture.coordinator.onSessionStateChange = { [weak coordinator = fixture.coordinator] state in
+            if state == .idle { coordinator?.cancel(reason: .escape) }
+        }
+        fixture.coordinator.pointerDown(locationInWindow: point, sourceCell: cell, memberFolderID: nil)
+        fixture.coordinator.pointerUp(locationInWindow: point)
+        XCTAssertEqual(clicks, 1, "Existing idle cancel is a no-op, not cancellation of a completed click")
+        XCTAssertFalse(fixture.coordinator.isSessionActive)
+    }
+
+    func testClickCleanupTargetReuseRefusesReplacementActivation() async throws {
+        try await assertCleanupInterruptionRefusesActivation(.reuse)
+    }
+
+    private enum CleanupInterruption { case teardown, cancel, reuse }
+
+    private func assertCleanupInterruptionRefusesActivation(_ interruption: CleanupInterruption) async throws {
+        let (fixture, _) = try await mountedB1Fixture()
+        defer { teardownFixture(fixture) }
+        let page = try XCTUnwrap(fixture.assembly.renderer.pageView(forPage: 0))
+        let cell = try XCTUnwrap(page.cell(at: 0)), replacement = try XCTUnwrap(page.cell(at: 1)?.bindingToken)
+        let point = windowPoint(of: cell)
+        var interrupted = false, clicks = 0, blankClicks = 0
+        fixture.coordinator.onCellClick = { _ in clicks += 1 }
+        fixture.coordinator.onOverlayBlankClick = { blankClicks += 1 }
+        fixture.coordinator.onSessionStateChange = { [weak coordinator = fixture.coordinator, weak cell] state in
+            guard state == .idle, !interrupted else { return }
+            interrupted = true
+            switch interruption {
+            case .teardown: coordinator?.teardown()
+            case .cancel:
+                coordinator?.pointerDown(locationInWindow: point, sourceCell: cell, memberFolderID: nil)
+                coordinator?.cancel(reason: .escape)
+            case .reuse: cell?.bind(name: "Replacement fixture", token: replacement)
+            }
+        }
+        fixture.coordinator.pointerDown(locationInWindow: point, sourceCell: cell, memberFolderID: nil)
+        fixture.coordinator.pointerUp(locationInWindow: point)
+        XCTAssertTrue(interrupted)
+        XCTAssertEqual(clicks, 0)
+        XCTAssertEqual(blankClicks, 0)
+        XCTAssertFalse(fixture.coordinator.isSessionActive)
+        XCTAssertEqual(fixture.launcher.opened.count, 0)
+    }
+
+    func testDuplicateReleaseInsideCompletedFallbackClickIsNotManuallyRedelivered() {
+        ClickCensus.resetForTesting()
+        let (window, probe, cell) = makeWindowWithCell()
+        let coordinator = DragUISessionCoordinator(host: probe)
+        cell.dragCoordinator = coordinator
+        defer { coordinator.teardown() }
+        let point = NSPoint(x: 60, y: 60)
+        var clicks = 0
+        coordinator.onCellClick = { _ in
+            clicks += 1
+            if clicks == 1 { window.sendEvent(self.mouseEvent(.leftMouseUp, at: point, in: window)) }
+        }
+        window.sendEvent(mouseEvent(.leftMouseDown, at: point, in: window))
+        window.sendEvent(mouseEvent(.leftMouseUp, at: point, in: window))
+        XCTAssertEqual(clicks, 1)
+        XCTAssertEqual(ClickCensus.count(ClickCensus.Sink.fallbackDispatch), 1)
+        XCTAssertEqual(ClickCensus.count(ClickCensus.Sink.pointerUpIdleSwallow), 0)
+        XCTAssertFalse(coordinator.isSessionActive)
+    }
+
     func testB1GateOnDraggedDeliversToRecordedView() {
         XCTAssertEqual(setenv("PAGING_CLICK_MANUAL_DELIVERY", "1", 1), 0, "测试 env 设置")
         defer { unsetenv("PAGING_CLICK_MANUAL_DELIVERY") }
@@ -213,6 +411,36 @@ final class B1ManualDeliveryTests: XCTestCase {
         XCTAssertEqual(ClickCensus.count(ClickCensus.Sink.pointerUpIdleSwallow), 1,
                        "drag 已投递（fallback 被清除）→ up 落 idle → s5（与「未投递 → 零计数」判别对）")
         XCTAssertEqual(counter.count, 0, "drag+up 全程零 click 派发")
+    }
+
+    func testB1InteractionZoneUsesAppKitPassThroughInsteadOfManualCellDelivery() {
+        XCTAssertEqual(setenv("PAGING_CLICK_MANUAL_DELIVERY", "1", 1), 0, "测试 env 设置")
+        defer { unsetenv("PAGING_CLICK_MANUAL_DELIVERY") }
+        ClickCensus.resetForTesting()
+        let (window, probe, cell) = makeWindowWithCell()
+        let field = AppSearchFieldView(frame: NSRect(x: 180, y: 210, width: 160, height: 28))
+        probe.addSubview(field)
+        let counter = ClickCounter()
+        let coordinator = makeCoordinator(host: probe, counter: counter)
+        cell.dragCoordinator = coordinator
+        defer { coordinator.teardown() }
+
+        window.sendEvent(mouseEvent(.leftMouseDown, at: NSPoint(x: 220, y: 224), in: window))
+
+        XCTAssertTrue(blankClickResolvesToInteractionZone(field))
+        XCTAssertEqual(ClickCensus.count(ClickCensus.Sink.cellMouseDownFired), 0,
+                       "search interaction zone must not enter B1 cell delivery")
+        XCTAssertEqual(ClickCensus.count(ClickCensus.Sink.windowCellPassthrough), 0,
+                       "search interaction zone is handled before cell classification")
+        // Headless AppKit may deliver this control event without consulting the probe's
+        // internal hitTest path. The production invariant here is that the window does not
+        // enter B1 or classify the control as blank; the event is handed to super above.
+        XCTAssertEqual(ClickCensus.count(ClickCensus.Sink.windowBlankUnclassified), 0,
+                       "interaction zone must not enter the blank termination path")
+        XCTAssertEqual(ClickCensus.count(ClickCensus.Sink.deliveryProbeManualHitChain(
+            chain: "AppSearchFieldView_\(String(describing: type(of: probe)))")), 1,
+                       "manual hit testing still identifies the search control before pass-through")
+        XCTAssertEqual(counter.count, 0)
     }
 
     // MARK: - ②-④ 空白点击（门控开）：原 s8/s8c 分支不变；ESC key53：原语义 + 清记录

@@ -155,7 +155,7 @@ public enum ActivationApplyTransaction {
             return requestedEnabled
         case .disabled:
             return !requestedEnabled
-        case .requiresApproval, .unavailable, .failure:
+        case .requiresApproval, .unavailable, .failure, .operationFailed:
             return false
         }
     }

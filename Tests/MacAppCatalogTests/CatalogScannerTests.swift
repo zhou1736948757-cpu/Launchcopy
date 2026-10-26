@@ -85,6 +85,37 @@ final class CatalogScannerTests: XCTestCase {
         XCTAssertEqual(result.snapshot?.records.first?.bundleIdentifier, "com.example.deep")
     }
 
+    private final class ReadRecorder: BundleMetadataReading, @unchecked Sendable {
+        private let lock = NSLock()
+        private var reads: [URL] = []
+        var observed: [URL] { lock.lock(); defer { lock.unlock() }; return reads }
+        func readBundleMetadata(at url: URL, fileManager: FileManager) -> BundleMetadataResult {
+            lock.lock(); reads.append(url); lock.unlock()
+            return BundleMetadataReader().readBundleMetadata(at: url, fileManager: fileManager)
+        }
+    }
+
+    func testDefaultNoFollowSkipsOrdinaryDirectorySymlinkBeforeOutsideMetadataRead() throws {
+        let local = try FakeAppFactory(), outside = try FakeAppFactory()
+        let valid = try local.makeApp(named: "Local", bundleID: "fixture.local")
+        try outside.makeApp(named: "Outside", bundleID: "fixture.outside")
+        try FileManager.default.createSymbolicLink(at: local.root.appendingPathComponent("External"),
+                                                   withDestinationURL: outside.root)
+        let recorder = ReadRecorder()
+        let result = scan(ScanConfiguration(roots: [local.root]), scanner: CatalogScanner(metadataReader: recorder))
+        XCTAssertEqual(result.snapshot?.records.map(\.bundleIdentifier), ["fixture.local"])
+        XCTAssertEqual(recorder.observed.map { $0.resolvingSymlinksInPath() }, [valid.resolvingSymlinksInPath()], "No outside metadata reader call is admitted")
+    }
+
+    func testExplicitFollowStillAllowsOrdinaryDirectoryAliasWithoutChangingDefaultContract() throws {
+        let local = try FakeAppFactory(), outside = try FakeAppFactory()
+        try outside.makeApp(named: "Outside", bundleID: "fixture.outside")
+        try FileManager.default.createSymbolicLink(at: local.root.appendingPathComponent("External"),
+                                                   withDestinationURL: outside.root)
+        let result = scan(ScanConfiguration(roots: [local.root], followDirectorySymlinks: true))
+        XCTAssertEqual(result.snapshot?.records.map(\.bundleIdentifier), ["fixture.outside"])
+    }
+
     // MARK: stopAtAppBundle（§10.3：.app 内嵌 helper 不被当顶层 app）
 
     func testHelperAppInsideBundleIsNotEnumeratedByDefault() throws {

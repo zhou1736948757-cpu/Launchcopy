@@ -28,6 +28,11 @@ public final class KeyboardFocusController: NSView {
     /// T-1D-D：Command-F 搜索快捷键回调（装配层接到后进入搜索；responder 转移 seam）。
     public var onSearchShortcut: (() -> Void)?
 
+    /// Supplied by the owner from Surface direct-navigation state; nil means inactive.
+    public var isPointerPageNavigationActive: (() -> Bool)?
+    /// Does not affect the independent folder responder path or Escape/search.
+    public var gridInputIsAvailable: (() -> Bool)?
+
     // MARK: - Folder 打开状态感知（T-1E-D；T-1E-E 接线）
 
     /// 当前文件夹打开状态提供者（T-1E-E 接线；nil = 无 folder 打开层）。
@@ -73,7 +78,7 @@ public final class KeyboardFocusController: NSView {
     private weak var surface: PagingSurface?
     private var pageTurner: KeyboardPageTurner?
     private var navigator: AppGridFocusNavigator?
-    private let columns: Int
+    private var columns: Int
     private var lastAppliedIdentity: AppGridFocusIdentity?
     /// F1（T-1C-C repair）→ T-1C-D（bug-1 修复）：进行中的键盘跨页 settle 完整目标身份（页+槽）。
     /// handleArrow 在一次被接受的键盘跨页后置位完整 target；settle 完成/中断（Core 回 idle）后
@@ -87,8 +92,10 @@ public final class KeyboardFocusController: NSView {
 
     /// T-1E-D：打开 folder 的顶层条目身份（关闭后恢复焦点用；nil = 无打开 folder）。
     private var openedFolderIdentity: TopLevelEntryIdentity?
-    /// T-1E-D：内部成员焦点（全局成员 index；nil = 未聚焦成员）。
-    private var innerFocusIndex: Int?
+    /// Opening preserves the accepted first-arrow movement from index zero without selection.
+    private var innerNavigationSeedIndex: Int? = 0
+    /// Real selection is an identity, so a capacity change never reinterprets an old slot.
+    private var innerSelectedMember: AppID?
     /// T-1E-D：标题编辑模式（编辑中 → ESC 取消、箭头/Return 不启动 app）。
     private var isEditingTitle = false
 
@@ -132,6 +139,11 @@ public final class KeyboardFocusController: NSView {
     public override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     public override func keyDown(with event: NSEvent) {
+        if !isFolderOpen, gridInputIsAvailable?() == false,
+           arrowDirection(for: event) != nil || isActivationKey(event) { return }
+        if [UInt16(123), 124, 125, 126, 36, 76, 53].contains(event.keyCode) {
+            folderOverlayProvider?()?.cancelTrackpadPaging()
+        }
         // T-1E-D：ESC 优先级（编辑标题 → 取消；folder 打开 → 关闭；否则 → 清除网格选择）。
         if event.keyCode == KeyCodes.escape {
             handleEscape()
@@ -140,6 +152,11 @@ public final class KeyboardFocusController: NSView {
         // T-1E-D：标题编辑中箭头/Return 不启动 app（编辑器为 first responder，正常不达此处；防御）。
         if isEditingTitle {
             super.keyDown(with: event)
+            return
+        }
+        if !isFolderOpen,
+           arrowDirection(for: event) != nil || isActivationKey(event),
+           isPointerPageNavigationActive?() == true {
             return
         }
         if let direction = arrowDirection(for: event) {
@@ -167,6 +184,11 @@ public final class KeyboardFocusController: NSView {
     }
 
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if !isFolderOpen, gridInputIsAvailable?() == false,
+           arrowDirection(for: event) != nil || isActivationKey(event) { return true }
+        if [UInt16(123), 124, 125, 126, 36, 76, 53].contains(event.keyCode) {
+            folderOverlayProvider?()?.cancelTrackpadPaging()
+        }
         // T-1E-D：Command-F → folder 打开先安全关闭再搜索；否则直接搜索。
         if isSearchShortcut(event) {
             handleCommandF()
@@ -174,6 +196,11 @@ public final class KeyboardFocusController: NSView {
         }
         if isEditingTitle {
             return false
+        }
+        if !isFolderOpen,
+           arrowDirection(for: event) != nil || isActivationKey(event),
+           isPointerPageNavigationActive?() == true {
+            return true
         }
         if isActivationKey(event) {
             // T-1E-D：folder 打开 → 激活成员；否则 → 顶层激活分流。
@@ -202,6 +229,12 @@ public final class KeyboardFocusController: NSView {
         exitKeyboardSelection()
     }
 
+    /// Clear before forwarding an accepted pointer page request, which may commit synchronously.
+    public func clearFocusForPointerNavigation() {
+        pendingCrossPageSettleTarget = nil
+        exitKeyboardSelection()
+    }
+
     /// T-1D-D：搜索转移焦点——把焦点设置到指定身份并显示焦点框（退出 deferred 态）。
     /// 供搜索控制器在 ↓/Return/Enter 时把焦点转移到当前已显示页第一个有效结果。
     public func setFocus(to identity: AppGridFocusIdentity) {
@@ -222,6 +255,35 @@ public final class KeyboardFocusController: NSView {
         }
         applyFocusVisual()
     }
+
+    /// A layout transaction, not a catalog migration: same-revision identities
+    /// relocate explicitly, while deferred keyboard selection remains deferred.
+    public func reconfigureGrid(capacity: MainGridCapacity, layout: AppGridFocusLayout,
+                                selectedIdentity: TopLevelEntryIdentity?) {
+        guard let surface, !surface.isTearingDown else { return }
+        columns = capacity.columns
+        navigator = AppGridFocusNavigator(columns: columns)
+        pendingCrossPageSettleTarget = nil
+        let position = selectedIdentity.flatMap { layout.position(of: $0) }
+        if let selectedIdentity, let position {
+            let target = AppGridFocusIdentity(catalogRevision: layout.revision,
+                pageIndex: position.page, slotIndex: position.slot, entryIdentity: selectedIdentity)
+            isDeferredSelection = false
+            if target.pageIndex == surface.core.committedPage {
+                focusModel = AppGridFocusModel(current: target)
+            } else {
+                // Existing direct-page navigation will settle this identity.
+                focusModel = AppGridFocusModel(current: nil)
+                pendingCrossPageSettleTarget = target
+            }
+        } else {
+            focusModel = AppGridFocusModel(current: nil)
+            isDeferredSelection = true
+        }
+        applyFocusVisual()
+    }
+
+    public func refreshGridInputAvailability() { applyFocusVisual() }
 
     /// F1（T-1C-C repair）+ T-1C-D（bug-1 修复）：键盘跨页 settle 完成/中断后的焦点调和。
     ///
@@ -267,12 +329,35 @@ public final class KeyboardFocusController: NSView {
         folderOpenStateProvider?()?.isOpen == true
     }
 
+    /// Actual selected member, excluding deferred navigation seeds and removed members.
+    /// Retained while presentation is unavailable so a later reflow can restore its anchor.
+    public var focusedFolderMember: AppID? {
+        guard let selected = innerSelectedMember,
+              let entry = folderOpenStateProvider?()?.openEntry,
+              entry.members.contains(selected) else { return nil }
+        return selected
+    }
+
+    /// Reapply only the existing identity after the owner commits the new folder snapshot.
+    public func reconcileFolderLayout() {
+        if focusedFolderMember == nil { innerSelectedMember = nil }
+        applyInnerFocusVisual()
+    }
+
+    /// Explicit page controls clear selection; keyboard page crossings must not call this.
+    public func clearInnerSelectionForPageChange() {
+        innerSelectedMember = nil
+        innerNavigationSeedIndex = nil
+        applyInnerFocusVisual()
+    }
+
     /// 打开 folder（顶层 folder 激活）：记录条目身份、重置内部焦点、清除顶层焦点视觉、回调装配层。
     /// T-1E-folder-deferred-inner-focus-repair：打开时不显示内环，首次方向键后延迟显示
     /// （与 isDeferredSelection 一致）。
     private func openFolder(_ identity: AppGridFocusIdentity) {
         openedFolderIdentity = identity.entryIdentity
-        innerFocusIndex = 0
+        innerNavigationSeedIndex = 0
+        innerSelectedMember = nil
         focusModel = AppGridFocusModel(current: nil)
         applyFocusVisual()
         onOpenFolder?(identity)
@@ -280,15 +365,14 @@ public final class KeyboardFocusController: NSView {
 
     /// 鼠标点击打开 folder（T-1E-folder-mouse-open-repair）：镜像键盘打开路径。
     ///
-    /// 鼠标路径此前只做 `folderOpenState.open` + overlay 刷新，从不清除顶层焦点视觉
-    /// （外层蓝框残留）、不设置 `innerFocusIndex`/`openedFolderIdentity`、不应用内部焦点
-    /// 视觉（打开后无选中态，左右键看似失效）。本 seam 补齐全部状态初始化。
+    /// Resets the deferred navigation seed and selected identity through the same seam as keyboard opening.
     /// T-1E-folder-deferred-inner-focus-repair：打开时不显示内环，首次方向键后延迟显示
     /// （与 isDeferredSelection 一致）。`onOpenFolder` 仍负责打开状态 + overlay 配置
     /// （`openFolder(folderID:)` 作为 state+overlay 原语保留）。
     public func openFolderFromClick(_ folderID: FolderID) {
         openedFolderIdentity = .folder(folderID)
-        innerFocusIndex = 0
+        innerNavigationSeedIndex = 0
+        innerSelectedMember = nil
         focusModel = AppGridFocusModel(current: nil)
         applyFocusVisual()
         let identity = AppGridFocusIdentity(catalogRevision: 0, pageIndex: 0, slotIndex: 0,
@@ -307,7 +391,8 @@ public final class KeyboardFocusController: NSView {
         onCloseFolder?()
         restoreFocusAfterClose()
         openedFolderIdentity = nil
-        innerFocusIndex = nil
+        innerNavigationSeedIndex = nil
+        innerSelectedMember = nil
     }
 
     /// 关闭后恢复焦点：folder 条目仍存在 → 定位到它；消失 → 回退到组合首条目（确定性）。
@@ -332,14 +417,30 @@ public final class KeyboardFocusController: NSView {
     /// 内部成员导航（folder 打开时箭头）：四方向 + 跨页（焦点/页一致）。
     private func handleInnerArrow(_ direction: AppGridFocusDirection) {
         guard let folderOpenState = folderOpenStateProvider?(),
-              let entry = folderOpenState.openEntry else { return }
+              folderOpenState.isMemberPresentationAvailable,
+              let entry = folderOpenState.openEntry else {
+            applyInnerFocusVisual()
+            return
+        }
         let memberCount = entry.members.count
+        guard memberCount > 0 else { return }
         let membersPerPage = folderOpenState.membersPerPage
-        let navigator = FolderInnerNavigator(columns: columns, membersPerPage: membersPerPage)
-        let currentIndex = innerFocusIndex ?? 0
+        let navigator = FolderInnerNavigator(columns: folderOpenState.columns,
+                                             membersPerPage: membersPerPage)
+        let selectedIndex = focusedFolderMember.flatMap { entry.members.firstIndex(of: $0) }
+        let candidateIndex = selectedIndex ?? innerNavigationSeedIndex
+        guard let currentIndex = candidateIndex, currentIndex >= 0, currentIndex < memberCount,
+              currentIndex / membersPerPage == folderOpenState.innerPage else {
+            // After an explicit page change, the first arrow selects rather than moves.
+            innerSelectedMember = folderOpenState.members(onPage: folderOpenState.innerPage).first
+            innerNavigationSeedIndex = nil
+            applyInnerFocusVisual()
+            return
+        }
         guard let move = navigator.move(currentIndex: currentIndex, memberCount: memberCount,
                                         direction: direction) else { return }
-        innerFocusIndex = move.memberIndex
+        innerSelectedMember = entry.members[move.memberIndex]
+        innerNavigationSeedIndex = nil
         if move.crossedPage {
             onInnerPageChange?(move.memberIndex / membersPerPage)
         }
@@ -349,19 +450,28 @@ public final class KeyboardFocusController: NSView {
     /// 激活内部成员（folder 打开时 Return/Enter）。
     private func activateInnerMember() {
         guard let folderOpenState = folderOpenStateProvider?(),
-              let entry = folderOpenState.openEntry else { return }
-        let index = innerFocusIndex ?? 0
-        guard index >= 0, index < entry.members.count else { return }
-        onActivateMember?(entry.members[index])
+              folderOpenState.isMemberPresentationAvailable else { return }
+        let visibleMembers = folderOpenState.members(onPage: folderOpenState.innerPage)
+        if let selected = focusedFolderMember, visibleMembers.contains(selected) {
+            onActivateMember?(selected)
+        } else if let first = visibleMembers.first {
+            onActivateMember?(first)
+        }
     }
 
     /// 内部成员焦点视觉（经 overlay 的 memberCell；slot = 全局 index % membersPerPage）。
     private func applyInnerFocusVisual() {
         guard let overlay = folderOverlayProvider?() else { return }
-        let membersPerPage = max(overlay.membersPerPage, 1)
-        let slot = (innerFocusIndex ?? 0) % membersPerPage
+        let state = folderOpenStateProvider?()
+        let selected = focusedFolderMember
+        var slot: Int?
+        if let state, state.isMemberPresentationAvailable, let selected,
+           let index = state.openEntry?.members.firstIndex(of: selected),
+           index / state.membersPerPage == state.innerPage {
+            slot = index % state.membersPerPage
+        }
         for i in 0..<overlay.memberCellCount {
-            overlay.memberCell(at: i)?.setFocused(i == slot)
+            overlay.memberCell(at: i)?.setFocused(i == slot && overlay.memberAppID(at: i) == selected)
         }
     }
 
@@ -455,6 +565,11 @@ public final class KeyboardFocusController: NSView {
 
     private func applyFocusVisual() {
         guard let surface, !surface.isTearingDown else { return }
+        if !isFolderOpen, gridInputIsAvailable?() == false {
+            if let last = lastAppliedIdentity { cell(for: last)?.setFocused(false) }
+            lastAppliedIdentity = nil
+            return
+        }
         guard let identity = focusModel.current else {
             if let last = lastAppliedIdentity {
                 cell(for: last)?.setFocused(false)

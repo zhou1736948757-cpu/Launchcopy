@@ -2,7 +2,7 @@
 // 实现：T-1F-D1（Worker）。
 //
 // 中性拖拽视觉（不复制任何被禁来源；无真实 app 截图）：
-// - drag preview：中性圆角胶囊 + 条目标题文本（与 cell 同源文本；无图标/截图）。
+// - Drag preview: durable source icon and caption, with no decorative backing.
 // - insertion 指示：细竖条（顶层/成员间插入带）。
 // - folder 高亮：目标 folder cell 圆角描边。
 // - create-folder 指示：虚线圆角框 + "+" 徽标（与 insertion 竖条形状可区分，非仅颜色）。
@@ -56,6 +56,13 @@ public final class DragUIVisuals {
     /// move-out 折叠会隐藏源 cell；preview 必须持有独立图标副本，不能继续读 hidden cell。
     private var cachedPreviewIcon: NSImage?
     private var cachedPreviewName: String = ""
+    // Captured with the content, never read from a disappearing source on moves.
+    private var cachedPreviewAppearance: GridItemAppearance = .default
+    private var cachedPreviewShowsLabels = true
+    private static let previewSize = NSSize(width: 96, height: 88)
+    private var cachedPreviewSize = DragUIVisuals.previewSize
+    private var cachedPreviewContext: GridItemLayoutContext = .standard
+    private var cachedPreviewIconSide: CGFloat?
     /// preview 已抬到 window.contentView（盖过 overlay）时，setHost 不得再把它拽回 surface。
     private var previewElevatedAboveOverlay = false
 
@@ -79,7 +86,9 @@ public final class DragUIVisuals {
         for view in [previewView, insertionIndicator, folderHighlight, createFolderIndicator] {
             if view === previewView, previewElevatedAboveOverlay { continue }
             if view.superview != nil, view.superview !== newHost {
+                let converted = newHost.convert(view.bounds, from: view)
                 newHost.addSubview(view)
+                view.frame = converted
             }
         }
     }
@@ -90,11 +99,16 @@ public final class DragUIVisuals {
     /// （图标 + 名称，布局与 AppGridCellView 一致：图标上、名称下）。
     /// 内容与源 cell 同源（cell 自身图标/名称）——无新隐私暴露。
     public func showPreview(sourceCell: AppGridCellView?, at point: NSPoint) {
-        guard host != nil else { return }
+        // A new show starts a session. Only capture(nil) continues durable content.
+        resetCachedPreviewContent()
+        previewElevatedAboveOverlay = false
+        guard host != nil else {
+            applyCachedPreviewContent()
+            return
+        }
         capturePreview(from: sourceCell)
-        applyCachedPreviewContent()
-        placePreview(at: point)
         attach(previewView)
+        placePreview(at: point)
         bringPreviewToFront()
         previewView.isHidden = false
         // 不用淡入动画：move-out 立刻切宿主会打断 animator，alpha 可能卡在 0。
@@ -109,7 +123,23 @@ public final class DragUIVisuals {
 
     /// 在 panel 折叠前调用：强制从源 cell 再抓一份位图（比读 image 属性更稳）。
     public func capturePreview(from sourceCell: AppGridCellView?) {
-        cachedPreviewName = sourceCell?.boundName ?? cachedPreviewName
+        if let sourceCell {
+            sourceCell.layoutSubtreeIfNeeded()
+            cachedPreviewName = sourceCell.boundName
+            cachedPreviewAppearance = sourceCell.itemAppearance
+            cachedPreviewShowsLabels = sourceCell.showsAppLabels
+            cachedPreviewContext = sourceCell.contentLayoutContext
+            if cachedPreviewContext != .standard {
+                let side = sourceCell.iconView.frame.width
+                cachedPreviewIconSide = side.isFinite ? max(side, 0) : 0
+                let captions = GridItemContentGeometry(bounds: NSRect(x: 0, y: 0, width: 256, height: 512),
+                    appearance: cachedPreviewAppearance, showsLabels: true, isFolderCell: false)
+                let captionHeight = cachedPreviewShowsLabels ? captions.nameFrame.height : 0
+                let contentSpacing: CGFloat = cachedPreviewContext == .folderGrid ? 18 : 8
+                cachedPreviewSize = NSSize(width: max(96, (cachedPreviewIconSide ?? 0) + 24),
+                    height: max(88, (cachedPreviewIconSide ?? 0) + captionHeight + contentSpacing))
+            }
+        }
         if let snap = Self.snapshotImage(of: sourceCell?.iconView)
             ?? Self.snapshotImage(of: sourceCell)
             ?? durableImage(sourceCell?.iconView.image) {
@@ -122,8 +152,8 @@ public final class DragUIVisuals {
     public func reaffirmPreview(at point: NSPoint) {
         guard host != nil else { return }
         applyCachedPreviewContent()
-        placePreview(at: point)
         attach(previewView)
+        placePreview(at: point)
         bringPreviewToFront()
         previewView.isHidden = false
         previewView.alphaValue = 1
@@ -138,8 +168,8 @@ public final class DragUIVisuals {
         previewElevatedAboveOverlay = true
         // 注意：不改 self.host——几何/蓝条仍跟 visualHost；仅 preview 抬层。
         applyCachedPreviewContent()
-        placePreview(at: point)
         content.addSubview(previewView, positioned: .above, relativeTo: sibling)
+        placePreview(at: point)
         previewView.isHidden = false
         previewView.alphaValue = 1
     }
@@ -178,7 +208,7 @@ public final class DragUIVisuals {
             }
             hide(insertionIndicator, createFolderIndicator)
         case .createFolder(let target):
-            if let frame = frame(for: .app(target), in: geometry) {
+            if let frame = frame(for: .app(target), in: geometry, usesGroupingTarget: true) {
                 showCreateFolderIndicator(frame)
             } else {
                 hide(createFolderIndicator)
@@ -198,8 +228,8 @@ public final class DragUIVisuals {
         insertionIndicator.isHidden = true
         folderHighlight.isHidden = true
         createFolderIndicator.isHidden = true
-        cachedPreviewIcon = nil
-        cachedPreviewName = ""
+        resetCachedPreviewContent()
+        applyCachedPreviewContent()
         previewElevatedAboveOverlay = false
         // 若曾抬到 contentView，清掉以免残留在窗口上。
         if previewView.superview != nil, previewView.superview !== host {
@@ -244,6 +274,11 @@ public final class DragUIVisuals {
     /// 兼收 T-1F-B7-wave-b r1 MINOR-3 语义）。
     /// 绝不使用 geometry.page（folder scope 下 = innerPage，页号陷阱）；只信帧注记。
     private func localInsertionIndex(fromGlobal globalIndex: Int, frames: [DragItemFrame]) -> Int {
+        if !frames.isEmpty, frames.allSatisfy({ $0.logicalIndex != nil }) {
+            // Several canonical gaps may share one displayed boundary. Map back
+            // from logical order before computing the pointer-aware bar geometry.
+            return frames.firstIndex { $0.logicalIndex! >= globalIndex } ?? frames.count
+        }
         guard let first = frames.first,
               let pageIndex = first.pageIndex,
               let itemsPerPage = first.itemsPerPage else { return globalIndex }
@@ -323,10 +358,11 @@ public final class DragUIVisuals {
         return 0
     }
 
-    private func frame(for identity: DragItemIdentity, in geometry: DragGeometry) -> DragRect? {
-        (geometry.itemFrames + geometry.topLevelFrames)
-            .first { $0.identity == identity }?
-            .frame
+    private func frame(for identity: DragItemIdentity, in geometry: DragGeometry,
+                       usesGroupingTarget: Bool = false) -> DragRect? {
+        guard let item = (geometry.itemFrames + geometry.topLevelFrames)
+            .first(where: { $0.identity == identity }) else { return nil }
+        return usesGroupingTarget ? (item.appGroupingFrame ?? item.frame) : item.frame
     }
 
     private func attach(_ view: NSView) {
@@ -341,16 +377,34 @@ public final class DragUIVisuals {
     private func applyCachedPreviewContent() {
         previewIconView.image = cachedPreviewIcon
         previewNameLabel.stringValue = cachedPreviewName
+        previewNameLabel.isHidden = !cachedPreviewShowsLabels
+        let fontSize = CGFloat(cachedPreviewAppearance.appLabelFontSize)
+        if previewNameLabel.font?.pointSize != fontSize {
+            previewNameLabel.font = .systemFont(ofSize: fontSize)
+        }
         layoutPreviewContent()
     }
 
+    private func resetCachedPreviewContent() {
+        cachedPreviewIcon = nil
+        cachedPreviewName = ""
+        cachedPreviewAppearance = .default
+        cachedPreviewShowsLabels = true
+        cachedPreviewSize = Self.previewSize
+        cachedPreviewContext = .standard
+        cachedPreviewIconSide = nil
+    }
+
     private func placePreview(at point: NSPoint) {
-        let size = NSSize(width: 96, height: 88)
+        let size = cachedPreviewSize
         // 坐标相对当前 preview 父视图（可能是 host，也可能是抬升后的 contentView）。
         let space = previewView.superview ?? host
+        let parentPoint: NSPoint
+        if let host, let space, space !== host { parentPoint = space.convert(point, from: host) }
+        else { parentPoint = point }
         let flipped = space?.isFlipped ?? false
-        let y = flipped ? point.y - size.height - 12 : point.y + 24
-        previewView.frame = NSRect(x: point.x - size.width / 2, y: y,
+        let y = flipped ? parentPoint.y - size.height - 12 : parentPoint.y + 24
+        previewView.frame = NSRect(x: parentPoint.x - size.width / 2, y: y,
                                    width: size.width, height: size.height)
     }
 
@@ -381,24 +435,31 @@ public final class DragUIVisuals {
 
     /// 迷你 cell 内容布局（与 AppGridCellView.layout 一致：图标上、名称下）。
     private func layoutPreviewContent() {
-        let bounds = previewView.bounds
-        let iconSide = AppGridCellView.iconSide
-        let iconX = (bounds.width - iconSide) / 2
-        previewIconView.frame = NSRect(x: iconX, y: bounds.height - iconSide - 12,
-                                       width: iconSide, height: iconSide)
-        previewNameLabel.frame = NSRect(x: 2, y: 0, width: max(bounds.width - 4, 0), height: 14)
+        // Explicit main/folder previews preserve the captured glyph's actual fit.
+        // Standard callers retain their original size. No source reads on moves.
+        let geometry = GridItemContentGeometry(
+            bounds: NSRect(origin: .zero, size: cachedPreviewSize),
+            appearance: cachedPreviewAppearance,
+            showsLabels: cachedPreviewShowsLabels, isFolderCell: false,
+            context: cachedPreviewContext,
+            iconSideLimit: cachedPreviewContext == .folderGrid ? cachedPreviewIconSide : nil)
+        var iconFrame = geometry.iconFrame
+        if let capturedSide = cachedPreviewIconSide {
+            let side = min(capturedSide, iconFrame.width)
+            iconFrame = NSRect(x: iconFrame.midX - side / 2, y: iconFrame.midY - side / 2,
+                               width: side, height: side)
+        }
+        previewIconView.frame = iconFrame
+        previewNameLabel.frame = geometry.nameFrame
     }
 
     private func configureViews() {
         previewView.wantsLayer = true
-        previewView.layer?.cornerRadius = 12
-        previewView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        previewView.layer?.borderWidth = 1
-        previewView.layer?.borderColor = NSColor.separatorColor.cgColor
-        previewView.layer?.shadowColor = NSColor.black.cgColor
-        previewView.layer?.shadowOpacity = 0.25
-        previewView.layer?.shadowRadius = 6
-        previewView.layer?.shadowOffset = CGSize(width: 0, height: -2)
+        // The captured icon supplies its own silhouette; a card and shadow paint
+        // an unwanted dark patch over the folder's glass during direct manipulation.
+        previewView.layer?.backgroundColor = NSColor.clear.cgColor
+        previewView.layer?.borderWidth = 0
+        previewView.layer?.shadowOpacity = 0
         previewIconView.imageScaling = .scaleProportionallyUpOrDown
         previewIconView.imageAlignment = .alignCenter
         previewNameLabel.font = .systemFont(ofSize: 11)

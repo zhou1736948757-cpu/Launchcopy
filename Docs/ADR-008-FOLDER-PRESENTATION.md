@@ -138,3 +138,14 @@ The existing neutral `PagingPageContentItem.identity: AnyHashable` seam **alread
 - **Folder-lab group rule**: **stable catalog order, first N per group**, neutral titles (`Group 1`, …), default off. See §2.5.
 - Phase 1D manual search GUI gates remain `NOT_RUN` (no user evidence in the events tail) — recorded as a boundary in the Phase 1E final report.
 - T-1E-H2-repair: **resolved** (merged, 633/0) — T-1E-B may start.
+
+## 2026-10-16 — Source-origin transition decision
+User accepted existing frosted panel aesthetic, then confirmed actualglyph-origin open/retract contract (Docs/FOLDER_SOURCE_ORIGIN_MOTION_SPEC.md). Replace short center nudge with uniform panel fit centered at currentglyph, using actualCAanchor and samecoordinate system. Stablepanel/editor host animates; fullwindowmodalroot/background do not. Pointer entrance240ms/exit200ms; RM180ms fade. Invalid/missing source follows existing opacity-open/synchronous-close safety. Presentation-layer reversal, generation gating, inert retained exits and lifecycle cancellation remain. Member pointer/control targets are gated during entrance to prevent settled-geometry misactivation; ESC/outsideclose/keyboard preserved. No wholeproduct or physicalgesture/performancePASS from source/unit verification.
+
+## 2026-10-17 — Human acceptance of handed-over source-origin folder experience
+
+The user replied “没问题，继续做吧” after being asked to assess origin expansion/collapse and actual folder-local two-finger navigation. Record no reported issue / accepted folder experience on the handed-over r2 candidate (executable bdb9a6e3; current464 source inputs and candidate identity reverified). This closes that bounded pending human gate, not every hardware/accessibility/performance gate or the whole parity objective. No new timed physical trial,120Hz evidence or wallpaper cause fix is inferred. No implementation/test/build/UI change for this acceptance record. Structured record: `.build/verification/20261017/folder-source-origin-user-acceptance.json`. Continue independently implemented remaining scope, with explicit confirmation before the reserved adjustable main-grid capacity contract.
+
+## 2026-10-17 — Search editor relinquishes folder command ownership
+
+Pointer opening from a live background search editor negotiates the native responder transfer to the existing folder keyboard controller before the modal opens. Do not clear the query, invent member selection or forward a second Escape. Respect editor refusal and current-owner identities across native callbacks. This restores existing modal priority while preserving no-folder search Escape and Cmd-F semantics. Owner/refusal/reentrancy regressions and exact6886de43 native originalsequence pass; real IME remains unverified. Full evidence `Workflow/results/FOLDER_SEARCH_RESPONDER_RESULTS.md`.

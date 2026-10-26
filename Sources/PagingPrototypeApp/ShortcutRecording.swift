@@ -11,6 +11,7 @@
 
 import AppKit
 import Foundation
+import LauncherLocalization
 
 // MARK: - Display
 
@@ -90,6 +91,16 @@ public enum ShortcutDisplay {
         return parts.joined()
     }
 
+    /// Selected-snapshot display. Key names and modifier symbols remain binding data.
+    public static func description(for spec: ShortcutSpec, strings: LocalizedStrings) -> String {
+        let symbols = modifierSymbols(spec.modifiers)
+        if let name = keyName(forKeyCode: spec.keyCode) {
+            return symbols + name
+        }
+        let keyCode = strings.activationKeyCode(Int(spec.keyCode))
+        return symbols.isEmpty ? keyCode : "\(symbols)·\(keyCode)"
+    }
+
     /// 人类可读描述：`⌘⌥Space`；未知键码回退 `⌘⌥·键码 N`。
     public static func description(for spec: ShortcutSpec) -> String {
         let mods = modifierSymbols(spec.modifiers)
@@ -122,6 +133,12 @@ public enum ShortcutPreset: Int, CaseIterable, Equatable, Sendable {
             guard let spec else { return "自定义…" }
             return ShortcutDisplay.description(for: spec)
         }
+    }
+
+    /// Relabels the preset caption without changing its tag or shortcut binding.
+    public func menuTitle(strings: LocalizedStrings) -> String {
+        guard let spec else { return strings.activationText(.shortcutCustomPreset) }
+        return ShortcutDisplay.description(for: spec, strings: strings)
     }
 
     /// 预设对应 ShortcutSpec；自定义为 nil（保留当前自定义值）。

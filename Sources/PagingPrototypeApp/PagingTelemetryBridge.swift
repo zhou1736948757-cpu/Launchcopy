@@ -153,8 +153,9 @@ public final class PagingTelemetryBridge {
     public func recordCatalogPresentation(_ update: AppGridPresentationUpdate, assembly: AppCatalogAssembly) {
         var event = TelemetryEvent(phase: "catalog.presentation")
         event.snapshotRevision = Int(update.plan.snapshotRevision.value)
-        event.catalogScanDurationMS = assembly.dataSource.lastScanDurationMS
-        event.refreshDurationMS = assembly.dataSource.lastRefreshDurationMS
+        let timings = assembly.dataSource.refreshTimings
+        event.catalogScanDurationMS = timings.scanDurationMS
+        event.refreshDurationMS = timings.refreshDurationMS
         session.record(event)
     }
 

@@ -1,3 +1,18 @@
+# Launchcopy — L1 checkpoint (2026-10-26)
+
+Native macOS launcher built with Swift 6 and AppKit. This checkpoint contains the current implementation, tests, specifications, provenance notes and bounded review/acceptance records.
+
+- Latest full automated run: **3824 tests, 0 failures**; focused run: **210 tests, 0 failures**. These are retained pre-upload results, not a new CI run.
+- The user accepted the first Library entry/return experience as **L1**. This is subjective acceptance, not a numerical frame-time guarantee or general release certification.
+- Debug/Release builds and isolated unsigned preview packaging passed in the preceding verification stage. This upload is source-only; no signed/notarized app or GitHub Release is provided.
+- Current evidence: [delivery index](Docs/CURRENT_DELIVERY_INDEX.md), [L1 checkpoint](Docs/L1_CHECKPOINT_2026-10-26.md), [Library investigation](Workflow/results/LIBRARY_IDLE_PRERENDER_2026-10-26.md).
+- Build: `swift build`; test: `swift test`. See `Package.swift` and `Scripts/package-app.sh` for current targets and packaging options. Local validation artifacts, personal preferences/layouts, raw diagnostic captures and reverse-engineering dumps are not included in this checkpoint tree.
+- Provenance records describe actual reference exposure and limitations; this repository does not claim blanket clean-room status or completed legal clearance.
+
+The earlier README below is retained as historical Phase 1A/1B documentation. Its counts, parameters, workflow and completeness statements are not the current delivery status. Runtime workflow JSON and local evidence paths referenced by historical notes may not be present in this source checkpoint. Per later user direction, development no longer requires the legacy Chief/watchdog process documented in the generated `AGENTS.md` section; ordinary verification and evidence boundaries still apply.
+
+---
+
 # PagingPrototype — Phase 1A + Phase 1B
 
 macOS AppKit 分页滑动性能原型（Phase 1A + Phase 1B）。Phase 1A 验证分页交互引擎与页面承载方式；Phase 1B 接入真实应用内容（应用目录扫描 + 运行时图标 + 异步缓存/取消 + 快照一致性 + 真实内容性能复测）。不是完整 Launchpad 产品，不复刻任何旧项目视觉。

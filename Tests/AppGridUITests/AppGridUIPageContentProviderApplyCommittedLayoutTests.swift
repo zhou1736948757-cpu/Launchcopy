@@ -123,12 +123,11 @@ final class AppGridUIPageContentProviderApplyCommittedLayoutTests: XCTestCase {
         XCTAssertNotNil(update)
         XCTAssertEqual(provider.presentationEntries.map(\.identity),
                        [.app(makeAppID("fixture.alpha")),
-                        .folder(ghostFolderID),
                         .app(makeAppID("fixture.beta"))],
-                       "缺失 app 引用跳过；folder 记录存在 → 保留（成员不可解析 → 空）")
-        XCTAssertEqual(provider.servedFolderSnapshot?.entry(for: ghostFolderID)?.members, [],
-                       "不可解析成员跳过")
-        XCTAssertEqual(update?.plan.itemCount, 3)
+                       "全成员不可用的 folder 只在持久布局保留，不显示空的占位 folder")
+        XCTAssertNil(provider.servedFolderSnapshot?.entry(for: ghostFolderID))
+        XCTAssertEqual(provider.expectedLayout, layout, "暂缺引用不得从持久真相删除")
+        XCTAssertEqual(update?.plan.itemCount, 2)
     }
 
     // MARK: - 无 served 快照 → nil

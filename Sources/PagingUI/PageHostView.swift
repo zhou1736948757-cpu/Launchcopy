@@ -14,6 +14,7 @@
 //
 
 import AppKit
+import LauncherLocalization
 
 /// 页面承载视图。
 public final class PageHostView: NSView, PagingPageRendering {
@@ -32,10 +33,57 @@ public final class PageHostView: NSView, PagingPageRendering {
 
     /// 自定义渲染器（PagingSurface.renderer 注入；nil = 中性缺省 NeutralPageRenderer）。
     /// 渲染目标 = 本视图自身（渲染器实现 PagingPageRenderingTargetBinding 可获得绑定）。
-    public var customRenderer: PagingPageRendering?
+    public var customRenderer: PagingPageRendering? {
+        didSet {
+            if oldValue == nil, customRenderer != nil {
+                // Retire only the abandoned neutral content. Clearing the host
+                // would bump reuseGeneration and invalidate the incoming bindings.
+                neutralRenderer.clearForReuse()
+            }
+            updateHostAppearance()
+        }
+    }
 
     /// 中性缺省渲染器（Phase 1A tile 网格/调色板；惰性创建以绑定 self）。
     private lazy var neutralRenderer = NeutralPageRenderer(targetView: self)
+    private var displayedStrings: LocalizedStrings?
+    private var textPageCount = 0
+    private var textUpdateGeneration: UInt64 = 0
+    private var textUpdateScheduled = false
+    internal private(set) var languageFormattingCount = 0
+
+    /// Snapshot-only injection is safe even when a pooled host is adopted on a frame.
+    public func relabel(strings: LocalizedStrings) {
+        displayedStrings = strings
+        queuePageText()
+    }
+
+    /// Count changes do not require a content rebind or resource lookup on a frame.
+    internal func stagePageCount(_ count: Int) {
+        guard textPageCount != count else { return }
+        textPageCount = count
+        queuePageText()
+    }
+
+    private func queuePageText() {
+        guard !textUpdateScheduled else { return }
+        textUpdateScheduled = true
+        let generation = textUpdateGeneration
+        DispatchQueue.main.async { [weak self] in
+            guard let self, generation == self.textUpdateGeneration else { return }
+            self.textUpdateScheduled = false
+            guard self.pageIndex >= 0 else { return }
+            self.languageFormattingCount += 1
+            self.setAccessibilityLabel(self.displayedStrings?.page(self.pageIndex + 1, total: self.textPageCount)
+                ?? "Page \(self.pageIndex + 1) of \(self.textPageCount)")
+        }
+    }
+
+    /// A surface drops queued host text before releasing its live or pooled views.
+    internal func invalidatePendingLanguageText() {
+        textUpdateGeneration &+= 1
+        textUpdateScheduled = false
+    }
 
     // MARK: - 初始化
 
@@ -43,9 +91,9 @@ public final class PageHostView: NSView, PagingPageRendering {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.cornerRadius = 12
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.separatorColor.cgColor
+        updateHostAppearance()
         setAccessibilityRole(.group)
     }
 
@@ -61,7 +109,9 @@ public final class PageHostView: NSView, PagingPageRendering {
     public func render(pageIndex: Int, content: PagingPageContent, pageCount: Int, reuseGeneration: UInt64) {
         self.pageIndex = pageIndex
         self.preparedItemsPerPage = content.items.count
-        setAccessibilityLabel("Page \(pageIndex + 1) of \(pageCount)")
+        updateHostAppearance()
+        textPageCount = pageCount
+        queuePageText()
         if let customRenderer {
             // 自定义渲染器：挂入本视图层级（若是 NSView）→ 绑定承载目标 → 委托渲染。
             if let rendererView = customRenderer as? NSView {
@@ -90,6 +140,7 @@ public final class PageHostView: NSView, PagingPageRendering {
 
     /// 进入复用池前的清理：清空内容 + generation bump（作废全部在途异步绑定）。
     public func clearForReuse() {
+        invalidatePendingLanguageText()
         reuseGeneration &+= 1
         pageIndex = -1
         preparedItemsPerPage = 0
@@ -104,6 +155,12 @@ public final class PageHostView: NSView, PagingPageRendering {
     /// 在途异步绑定作废守卫：异步回调携带的 generation 与当前不一致 → 丢弃（stale apply = 0）。
     public func isReuseGenerationCurrent(_ generation: UInt64) -> Bool {
         generation == reuseGeneration
+    }
+
+    /// Product renderers present content over the window backdrop. The nil renderer is the
+    /// neutral laboratory path and retains the original control-background chrome.
+    private func updateHostAppearance() {
+        layer?.backgroundColor = customRenderer == nil ? NSColor.controlBackgroundColor.cgColor : nil
     }
 
     // MARK: - Phase 1A 兼容入口（§E 约束④：NeutralContentProvider 路径继续可运行）

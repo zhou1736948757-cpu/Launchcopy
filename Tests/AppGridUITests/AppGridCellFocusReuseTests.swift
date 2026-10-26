@@ -31,8 +31,8 @@ final class AppGridCellFocusReuseTests: XCTestCase {
 
         cell.clearContent()
         XCTAssertFalse(cell.isFocused, "clearContent 后不得残留焦点视觉（layer border）")
-        XCTAssertEqual(cell.layer?.backgroundColor, NSColor.controlBackgroundColor.cgColor,
-                       "clearContent 后不得残留焦点背景")
+        XCTAssertNil(cell.layer?.backgroundColor,
+                     "Clearing focus restores the transparent idle backdrop, not an opaque tile")
         // accessibility focus 由 setFocused(false) 内的 setAccessibilityFocused(false) 清空
         // （AppGridCellFocus.swift；NSView 无 Swift 可见的 accessibilityFocused() getter，故以视觉状态断言）
     }
@@ -59,8 +59,8 @@ final class AppGridCellFocusReuseTests: XCTestCase {
         // 非键盘页面切换（trackpad fling / refresh）→ clearForReuse 回收
         page.clearForReuse()
         XCTAssertFalse(cell.isFocused, "clearForReuse 后聚焦 cell 不得残留焦点视觉")
-        XCTAssertEqual(cell.layer?.backgroundColor, NSColor.controlBackgroundColor.cgColor,
-                       "clearForReuse 后不得残留焦点背景")
+        XCTAssertNil(cell.layer?.backgroundColor,
+                     "Recycling restores the transparent idle backdrop without residual focus fill")
     }
 
     // MARK: - 复用后新内容不继承旧焦点视觉
@@ -90,7 +90,7 @@ final class AppGridCellFocusReuseTests: XCTestCase {
 
         XCTAssertEqual(page.cell(at: 0)?.nameLabel.stringValue, "Gamma")
         XCTAssertFalse(cell.isFocused, "复用后绑定新 app 的 cell 不得残留旧焦点视觉")
-        XCTAssertEqual(cell.layer?.backgroundColor, NSColor.controlBackgroundColor.cgColor,
-                       "复用后不得残留旧焦点背景")
+        XCTAssertNil(cell.layer?.backgroundColor,
+                     "Rebinding keeps the new transparent idle backdrop without old focus fill")
     }
 }

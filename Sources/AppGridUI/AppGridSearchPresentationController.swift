@@ -66,6 +66,20 @@ public final class AppGridSearchPresentationController {
         provider.receive(snapshot)
     }
 
+    /// Applies a committed layout and restores the current search before returning.
+    /// The caller owns the shared UI commit; neither presentation callback fires here.
+    @discardableResult
+    public func commitLayout(_ layout: PersistentWorkspaceLayout,
+                             currentPage: Int) -> AppGridPresentationUpdate? {
+        guard let update = provider.applyCommittedLayout(layout, atCurrentPage: currentPage,
+                                                         itemsPerPage: self.itemsPerPage) else { return nil }
+        if let query = currentQuery {
+            updateQuery(query)
+        }
+        commitPendingSearchResultIfCurrent()
+        return update
+    }
+
     // MARK: - idle 边界提交（§9.3 / ADR-007 §2.4）
 
     /// idle 边界一次性提交：
@@ -93,7 +107,7 @@ public final class AppGridSearchPresentationController {
     /// 搜索感知的中性 UI 状态（§10：base 空 → .empty；base 非空 + active 非空 query + 0 结果 → .noResults）。
     public var uiState: AppGridUIState {
         guard let base = provider.servedSnapshot else { return .loading }
-        if base.records.isEmpty { return .empty }
+        if base.records.allSatisfy({ provider.managementPreferences.isHidden($0) }) { return .empty }
         if let query = currentQuery, !query.isEmpty, provider.presentationRecords.isEmpty {
             return .noResults
         }
@@ -103,8 +117,8 @@ public final class AppGridSearchPresentationController {
     // MARK: - 内部
 
     private func filter(_ records: [AppRecord], query: AppSearchQuery) -> [AppRecord] {
-        guard !query.isEmpty else { return records }
-        return records.filter { matcher.matches($0, query: query) }
+        return records.filter { provider.managementPreferences.matches($0, query: query) }
+            .map { provider.managementPreferences.presentationRecord(for: $0) }
     }
 
     @discardableResult

@@ -8,10 +8,12 @@
 // - 编辑中箭头/Return 不启动 app（本视图为 first responder，吞掉编辑键；Tab 等交 AppKit）；
 // - 无磁盘写入、无 telemetry/JSONL/stdout/signpost/profile/report（标题文本绝不外泄）。
 //
-// 隐私硬边界：标题文本绝不进入 telemetry/JSONL/stdout/signpost/profile/report，绝不落盘。
+// Privacy: this editor never performs I/O or diagnostics. Its owner may persist a
+// successful rename only through the existing private workspace layout store.
 
 import AppGridUI
 import AppKit
+import LauncherLocalization
 
 /// 标题编辑 first responder：Enter 提交 / Escape 取消 / focus-loss 确定性提交。
 @MainActor
@@ -21,6 +23,9 @@ public final class FolderTitleEditor: NSTextField, NSTextFieldDelegate {
     public var onCommit: ((String) -> Void)?
     /// 取消回调（T-1E-E 接线到装配层）。
     public var onCancel: (() -> Void)?
+    /// Presentation-only update; never normalizes or replaces field-editor/IME text.
+    var onDraftSizeChange: (() -> Void)?
+
     /// 空白标题回退（中性；缺省 "Folder"）。
     public var fallbackTitle: String = "Folder"
 
@@ -34,16 +39,22 @@ public final class FolderTitleEditor: NSTextField, NSTextFieldDelegate {
         self.isSelectable = true
         self.isBordered = true
         self.bezelStyle = .roundedBezel
-        self.placeholderString = "Folder name"
+        self.placeholderString = GridTextKey.folderName.englishFallback
         self.maximumNumberOfLines = 1
         self.cell?.isScrollable = true
         self.cell?.wraps = false
-        self.setAccessibilityLabel("Folder name")
+        self.setAccessibilityLabel(GridTextKey.folderName.englishFallback)
     }
 
     @available(*, unavailable)
     public required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    /// Leaves field-editor text/selection, IME, completion guards and user fallback intact.
+    public func relabel(strings: LocalizedStrings) {
+        placeholderString = strings.gridText(.folderName)
+        setAccessibilityLabel(strings.gridText(.folderName))
     }
 
     public override var acceptsFirstResponder: Bool { true }
@@ -64,11 +75,22 @@ public final class FolderTitleEditor: NSTextField, NSTextFieldDelegate {
         }
     }
 
+    public func controlTextDidChange(_ obj: Notification) {
+        guard !didFinish else { return }
+        onDraftSizeChange?()
+    }
+
     // MARK: - focus-loss 确定性提交
 
     public func controlTextDidEndEditing(_ obj: Notification) {
-        // focus-loss → 确定性提交（与 Enter 一致）。
-        commit()
+        // AppKit can report cancellation through the end-edit notification,
+        // even before a cancel command. Ordinary focus loss still commits.
+        if let movement = obj.userInfo?[NSText.movementUserInfoKey] as? Int,
+           movement == NSCancelTextMovement {
+            cancel()
+        } else {
+            commit()
+        }
     }
 
     // MARK: - 提交 / 取消
@@ -77,7 +99,7 @@ public final class FolderTitleEditor: NSTextField, NSTextFieldDelegate {
     public func commit() {
         guard !didFinish else { return }
         didFinish = true
-        let normalized = FolderTitle.normalized(stringValue, fallback: fallbackTitle)
+        let normalized = FolderTitle.normalized(currentEditor()?.string ?? stringValue, fallback: fallbackTitle)
         onCommit?(normalized)
     }
 
@@ -86,5 +108,14 @@ public final class FolderTitleEditor: NSTextField, NSTextFieldDelegate {
         guard !didFinish else { return }
         didFinish = true
         onCancel?()
+    }
+
+    /// End ownership before unmount/responder changes can deliver a late focus-loss
+    /// notification. Each new application edit gets a fresh editor instance.
+    public func dismissWithoutCallback() {
+        didFinish = true
+        onCommit = nil
+        onCancel = nil
+        onDraftSizeChange = nil
     }
 }

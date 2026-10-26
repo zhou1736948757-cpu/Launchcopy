@@ -10,6 +10,7 @@
 
 import AppKit
 import Foundation
+import LauncherLocalization
 
 /// Settings 协调器（AppDelegate 强持有）。
 @MainActor
@@ -31,6 +32,14 @@ public final class ActivationSettingsCoordinator {
     public private(set) var committed: ActivationPreferences
 
     private var windowController: ActivationSettingsWindowController?
+    public var retainedSettingsController: ActivationSettingsWindowController? { windowController }
+    public var interfaceStringsProvider: (() -> LocalizedStrings?)?
+    public var preservesInterfaceDraftsOnReopen = false
+    /// Composition-owned capability normalization before validation, persistence or login actions.
+    var normalizeDraft: (ActivationPreferencesDraft) -> ActivationPreferencesDraft = { $0 }
+    public var refreshAcceptedInterfaceLanguage: (() -> Void)?
+    /// Composition root configures optional settings sections without a second window.
+    public var configureAdditionalSettings: ((ActivationSettingsWindowController) -> Void)?
 
     public init(
         store: any ActivationPreferencesPersisting,
@@ -62,21 +71,28 @@ public final class ActivationSettingsCoordinator {
     // MARK: - Show
 
     /// 打开或前置同一设置窗（永不创建重复实例）。
-    public func showSettings() {
+    public func showSettings() { prepareSettingsForPresentation().showSettings() }
+
+    /// Resolves/configures the actual controller without ordering or activating it.
+    @discardableResult
+    public func prepareSettingsForPresentation() -> ActivationSettingsWindowController {
+        let preserveDrafts = preservesInterfaceDraftsOnReopen && windowController != nil
         let draft = ActivationPreferencesDraft(committed: committed)
         let controller = ActivationSettingsWindowController.sharedOrCreate(
             draft: draft,
+            strings: interfaceStringsProvider?(),
+            preserveExistingDraft: preserveDrafts,
             fourFingerReadinessProvider: { [weak self] in
                 self?.fourFingerReadinessProvider() ?? ActivationSettingsUIStrings.fourFingerNotReady
             },
             launchAtLoginStatusProvider: { [weak self] in
                 let status = self?.loginService.currentStatus() ?? .disabled
-                return ActivationSettingsUIStrings.launchAtLoginStatusText(status)
+                return ActivationServicePresentation.loginStatus(status, strings: self?.interfaceStringsProvider?())
             },
             onApply: { [weak self] draft in
                 self?.handleApply(draft) ?? .failure(
-                    title: ActivationSettingsUIStrings.alertTitle,
-                    message: "内部错误：设置协调器不可用。"
+                    title: self?.interfaceStringsProvider?()?.activationStatusText(.activationAlertTitle) ?? ActivationSettingsUIStrings.alertTitle,
+                    message: self?.interfaceStringsProvider?()?.activationStatusText(.activationCoordinatorUnavailable) ?? "内部错误：设置协调器不可用。"
                 )
             },
             onRevert: {
@@ -86,7 +102,9 @@ public final class ActivationSettingsCoordinator {
             }
         )
         self.windowController = controller
-        controller.showSettings()
+        if preserveDrafts { refreshAcceptedInterfaceLanguage?() }
+        else { configureAdditionalSettings?(controller) }
+        return controller
     }
 
     /// 设置窗是否在前台可见。
@@ -106,6 +124,7 @@ public final class ActivationSettingsCoordinator {
     /// 供测试直接调用的 Apply（不依赖窗体）。
     @discardableResult
     public func applyDraft(_ draft: ActivationPreferencesDraft) -> ActivationApplyTransactionOutcome {
+        let draft = normalizeDraft(draft)
         let context = ActivationApplyTransactionContext(
             applyPreferences: { [weak self] prefs in
                 self?.applyPreferences(prefs)
@@ -144,24 +163,27 @@ public final class ActivationSettingsCoordinator {
 
     private func handleApply(_ draft: ActivationPreferencesDraft) -> ActivationSettingsApplyUIResult {
         let outcome = applyDraft(draft)
+        let strings = interfaceStringsProvider?()
         switch outcome {
         case .noOp, .applied:
             return .success
         case .invalid(let errors):
             return .failure(
-                title: ActivationSettingsUIStrings.alertTitle,
-                message: ActivationSettingsUIStrings.validationMessage(errors)
+                title: strings?.activationStatusText(.activationAlertTitle) ?? ActivationSettingsUIStrings.alertTitle,
+                message: ActivationServicePresentation.validation(errors, strings: strings)
             )
         case .loginNotAccepted(_, let status):
-            let detail = ActivationSettingsUIStrings.launchAtLoginStatusText(status)
+            let detail = ActivationServicePresentation.loginStatus(status, strings: strings)
             return .failure(
-                title: ActivationSettingsUIStrings.loginAlertTitle,
-                message: "未能完成「登录时打开」。\(detail)\n其他已接受的设置已保存；登录项偏好未宣称成功。"
+                title: strings?.activationStatusText(.activationLoginAlertTitle) ?? ActivationSettingsUIStrings.loginAlertTitle,
+                message: strings.map { detail + "\n" + $0.activationStatusText(.activationLoginPartial) } ??
+                    "未能完成「登录时打开」。\(detail)\n其他已接受的设置已保存；登录项偏好未宣称成功。"
             )
         case .persistRefused(let version, _, _):
             return .failure(
-                title: ActivationSettingsUIStrings.alertTitle,
-                message: "无法写入偏好（存储版本 \(version) 新于当前应用）。已尝试恢复先前配置。"
+                title: strings?.activationStatusText(.activationAlertTitle) ?? ActivationSettingsUIStrings.alertTitle,
+                message: strings?.activationFutureVersion(version) ??
+                    "无法写入偏好（存储版本 \(version) 新于当前应用）。已尝试恢复先前配置。"
             )
         }
     }
@@ -172,7 +194,8 @@ public final class ActivationSettingsCoordinator {
 public enum ActivationSettingsFourFingerReadiness {
     /// 从组合根推导中文旁路文案（Enabled ≠ Ready）。
     @MainActor
-    public static func text(from composition: ActivationComposition?) -> String {
+    public static func text(from composition: ActivationComposition?, strings: LocalizedStrings? = nil) -> String {
+        if let strings { return localizedText(from: composition, strings: strings) }
         guard let composition else {
             return ActivationSettingsUIStrings.fourFingerNotReady
         }
@@ -200,5 +223,59 @@ public enum ActivationSettingsFourFingerReadiness {
         case .suspended: detail = "已挂起"
         }
         return ActivationSettingsUIStrings.fourFingerReadinessText(isReady: false, detail: detail)
+    }
+}
+
+// Product copy is rendered from semantic outcomes, never persisted as a translated status.
+internal enum ActivationServicePresentation {
+    static func loginStatus(_ status: LaunchAtLoginStatus, strings: LocalizedStrings?) -> String {
+        guard let strings else { return ActivationSettingsUIStrings.launchAtLoginStatusText(status) }
+        switch status {
+        case .disabled: return strings.activationStatusText(.activationLoginDisabled)
+        case .enabled: return strings.activationStatusText(.activationLoginEnabled)
+        case .requiresApproval: return strings.activationStatusText(.activationLoginApproval)
+        case .unavailable: return strings.activationStatusText(.activationLoginUnavailable)
+        case .failure(let detail):
+            return strings.activationStatusText(.activationLoginFailure) + " (" + detail + ")"
+        case .operationFailed(let enabling):
+            return strings.activationStatusText(.activationLoginFailure) + " (" +
+                strings.activationStatusText(enabling ? .activationLoginEnableFailed : .activationLoginDisableFailed) + ")"
+        }
+    }
+
+    static func validation(_ errors: [ActivationDraftValidationError], strings: LocalizedStrings?) -> String {
+        guard let strings else { return ActivationSettingsUIStrings.validationMessage(errors) }
+        return errors.map { error in
+            switch error {
+            case .hotCornerMissingSelectedCorner: return strings.activationStatusText(.activationCornerRequired)
+            case .shortcutMissingSpec: return strings.activationStatusText(.activationShortcutRequired)
+            case .shortcutMissingModifiers: return strings.activationStatusText(.activationModifierRequired)
+            }
+        }.joined(separator: "\n")
+    }
+}
+
+extension ActivationSettingsFourFingerReadiness {
+    @MainActor
+    private static func localizedText(from composition: ActivationComposition?, strings: LocalizedStrings) -> String {
+        guard let composition else { return strings.activationStatusText(.activationGestureNotReady) }
+        guard let backend = composition.fourFinger else {
+            let label = strings.activationStatusText(.activationGestureNotReady)
+            return composition.appliedPlan.fourFingerEnabled ?
+                label + " (" + strings.activationStatusText(.activationGestureBackendMissing) + ")" : label
+        }
+        let status = backend.displayStatus
+        if status.isReady { return strings.activationStatusText(.activationGestureReady) }
+        let key: ActivationStatusTextKey
+        switch status.state {
+        case .off: key = .activationGestureOff
+        case .checking: key = .activationGestureChecking
+        case .ready: key = status.enabled ? .activationGestureReady : .activationGestureSwitchOff
+        case .noDevice: key = .activationGestureNoDevice
+        case .unavailable: key = .activationGestureUnavailable
+        case .permissionNotConfirmed: key = .activationGesturePermission
+        case .suspended: key = .activationGestureSuspended
+        }
+        return strings.activationStatusText(.activationGestureNotReady) + " (" + strings.activationStatusText(key) + ")"
     }
 }

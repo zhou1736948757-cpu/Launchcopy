@@ -1,0 +1,13 @@
+# Runtime fixed-root coverage repair (maintenance)
+
+Date:2026-10-15. Authority: existingapprovedAPP_SOURCES_AND_WATCHING_SPEC's honestdegradation/manualretry contract. No newfeature/productpolicy/publicwatchinterface/trustedscanroot change.
+
+Problem: an active fixedroot can become unavailable; a delivered current-session invalidation reuses equalroots/sourcegeneration and cached backend.active without inspecting fixedroot availability. Nativefullrootmove didnotestablishautomaticinvalidation, so runtime manifestation remainsunproven; establish a causal current-callback regression first. Existingmanualdegraded/recovery/query/canonical-retention nativegate alreadypassed and is NOT newlyfixed.
+
+Scope: private AppSourcesCoordinator status reconciliation only, plus existingcoordinatortestfile. On existingevent-drivenwatch reconciliation, use the existingoff-Mainadmissionactor to inspect only the alreadyapprovedfixedrootcandidates with a coverage-onlycontext that removes the trusted-covered shortcut, retains home/synthetic/exactpath boundaries, and grants no scope. Keep trusted scan roots, persistence, admissionpolicy/publicprotocols, events/coalescing, icons/paging untouched. At most oneadditionalmetadataadmission per fixedroot perreconciliation, noneperframe/timer.
+
+If an existing session loses fixed-root availability, conservativelylatch degradedcoverage until an existingexplicit/generation/rootset-triggered watcherreplacement. Availabilityreturnalone is not proof streamcoverage wasreattached. Do not restartstreams onordinaryevents, addparentwatches/polling, promisefullautomaticreturn or remove canonicalrefs. Newreplacement uses actualbackendstartupcoverage plus currentavailability; disabled/teardown clearsprivate latch. Recheckgeneration/cancellation after everyasyncbatch before any status/latch mutation.
+
+Acceptance: usable/active fixedroot -> admissibilitymissing/unreadable with currentcallback -> degradedvisible, samewatchedroots, samecommittedprefs/no saves, existingdebouncedrefreshonly; repeatedevents do not rearm; usableagain+explicitRefreshNow -> freshwatch/active. Pendingobsoleteavailability result cannot mutate newerdisabled/teardown state. Preserve already-covered draftadmission behavior and allsynthetic no-external-probe guarantees.
+
+MainserialRED/focused/full/Debug/Release/package/exacthash; boundedindependentreview and exactcandidate nativeSourcesstatus smoke (not automaticrootnotificationproof). Existingnativefailure/recovery gate belongs889d...beforepatch. Actualwallpaper remains separateNOT_FIXED/approvalpending. NoOSpermissions/sign/install/commit/delete/kill/referencecode orformaldata.

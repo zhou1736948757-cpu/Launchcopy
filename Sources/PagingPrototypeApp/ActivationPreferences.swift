@@ -16,12 +16,13 @@
 //
 
 import Foundation
+import CoreFoundation
 
 /// 激活偏好值模型（用户开关 + 获批配置）。
 /// T-1G-A 的 `ActivationSettings` 是纯值契约（不触碰任何 defaults）；本层负责持久化。
 public struct ActivationPreferences: Equatable, Sendable {
-    /// 当前支持的 schema 版本（v2：settings 含 launchAtLoginEnabled）。
-    public static let currentSchemaVersion: Int = 2
+    /// Store schema v3 adds outward Hide; the inner ActivationSettings schema is unchanged.
+    public static let currentSchemaVersion: Int = 3
 
     /// 数据 schema 版本（load 时从存储读取；默认当前版本；v1 load 会迁移到当前版本）。
     public var schemaVersion: Int
@@ -30,14 +31,18 @@ public struct ActivationPreferences: Equatable, Sendable {
     /// 覆盖 ADR-013 §7 原锁定 false；默认开启 ≠ 立即启用——仍须后端就绪（Enabled ≠ Ready，
     /// 由 FourFingerActivationState 表达）与物理门通过。
     public var fourFingerActivationEnabled: Bool
+    /// Optional outward Hide choice, retained even when four-finger activation is off.
+    public var fourFingerOutwardHideEnabled: Bool
     /// 其余获批配置（hot corner / global shortcut / status item / launch at login）。
     public var settings: ActivationSettings
 
     public init(schemaVersion: Int = ActivationPreferences.currentSchemaVersion,
                 fourFingerActivationEnabled: Bool = true,
+                fourFingerOutwardHideEnabled: Bool = false,
                 settings: ActivationSettings = ActivationSettings()) {
         self.schemaVersion = schemaVersion
         self.fourFingerActivationEnabled = fourFingerActivationEnabled
+        self.fourFingerOutwardHideEnabled = fourFingerOutwardHideEnabled
         self.settings = settings
     }
 }
@@ -127,6 +132,7 @@ public final class UserDefaultsActivationPreferencesStore: ActivationPreferences
     private enum Key {
         static let schemaVersion = "activation.schemaVersion"
         static let fourFingerActivationEnabled = "activation.fourFingerActivationEnabled"
+        static let fourFingerOutwardHideEnabled = "activation.fourFingerOutwardHideEnabled"
         static let settingsPayload = "activation.settingsPayload"
     }
 
@@ -168,18 +174,25 @@ public final class UserDefaultsActivationPreferencesStore: ActivationPreferences
             settings = decoded
         }
 
-        // v1 → v2：补 launchAtLoginEnabled=false，并将内存 schema 提升到当前版本。
+        // Legacy schemas never opt in, even if an unrecognized outward key is present.
+        // Loading only migrates the in-memory value; explicit save owns all writes.
+        let outwardHide = storedVersion >= 3
+            && Self.explicitBoolean(defaults.object(forKey: Key.fourFingerOutwardHideEnabled))
+
+        // Preserve the existing v1 login migration while upgrading the store schema.
         if storedVersion < ActivationPreferences.currentSchemaVersion {
             settings = Self.migrateSettings(settings, fromStoreVersion: storedVersion)
             return .loaded(ActivationPreferences(
                 schemaVersion: ActivationPreferences.currentSchemaVersion,
                 fourFingerActivationEnabled: fourFinger,
+                fourFingerOutwardHideEnabled: outwardHide,
                 settings: settings
             ))
         }
 
         return .loaded(ActivationPreferences(schemaVersion: storedVersion,
                                              fourFingerActivationEnabled: fourFinger,
+                                             fourFingerOutwardHideEnabled: outwardHide,
                                              settings: settings))
     }
 
@@ -198,6 +211,7 @@ public final class UserDefaultsActivationPreferencesStore: ActivationPreferences
 
         // 数据先写、版本最后写（提交标记）：中途崩溃不会留下"新版本 + 旧数据"。
         defaults.set(preferences.fourFingerActivationEnabled, forKey: Key.fourFingerActivationEnabled)
+        defaults.set(preferences.fourFingerOutwardHideEnabled, forKey: Key.fourFingerOutwardHideEnabled)
         if let data = try? JSONEncoder().encode(settings) {
             defaults.set(data, forKey: Key.settingsPayload)
         }
@@ -209,14 +223,21 @@ public final class UserDefaultsActivationPreferencesStore: ActivationPreferences
     // MARK: 重置
 
     public func resetActivation() {
-        // 只清 activation namespace 三个 key；不动 layout store（不同 suite）与 suite 内其他 key。
+        // Clear only activation keys; retain other namespaces and the separate layout store.
         defaults.removeObject(forKey: Key.schemaVersion)
         defaults.removeObject(forKey: Key.fourFingerActivationEnabled)
+        defaults.removeObject(forKey: Key.fourFingerOutwardHideEnabled)
         defaults.removeObject(forKey: Key.settingsPayload)
     }
 
     public func removePersistentDomain() {
         defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    /// The opt-in must be an actual stored Boolean, not NSNumber(1) bridging.
+    private static func explicitBoolean(_ raw: Any?) -> Bool {
+        guard let value = raw as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { return false }
+        return value.boolValue
     }
 
     // MARK: Migration

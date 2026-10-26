@@ -80,22 +80,38 @@ public struct DragItemFrame: Equatable, Sendable {
     public let pageIndex: Int?
     /// 分页换算注记（BUG7 wave-b）：呈现每页条目数（与 pageIndex 成对注入）。
     public let itemsPerPage: Int?
+    /// Optional expected-layout index when invisible references create displayed gaps.
+    /// Nil preserves the existing page/local-index contract.
+    public let logicalIndex: Int?
+    /// Actual displayed app icon in the same host coordinates as `frame`.
+    /// Nil retains legacy geometry-only callers; an explicit empty frame never groups.
+    public let appGroupingFrame: DragRect?
 
     public init(identity: DragItemIdentity,
                 frame: DragRect,
                 pageIndex: Int? = nil,
-                itemsPerPage: Int? = nil) {
+                itemsPerPage: Int? = nil,
+                logicalIndex: Int? = nil,
+                appGroupingFrame: DragRect? = nil) {
         self.identity = identity
         self.frame = frame
         self.pageIndex = pageIndex
         self.itemsPerPage = itemsPerPage
+        self.logicalIndex = logicalIndex
+        self.appGroupingFrame = appGroupingFrame
     }
 
     /// 注记副本（D 层 makeDragGeometry 为顶层当前页帧标注分页换算信息；
     /// 公式 globalIndex = page * itemsPerPage + localIndex 在 intent 产出边界消费）。
     public func annotated(pageIndex: Int, itemsPerPage: Int) -> DragItemFrame {
         DragItemFrame(identity: identity, frame: frame,
-                      pageIndex: pageIndex, itemsPerPage: itemsPerPage)
+                      pageIndex: pageIndex, itemsPerPage: itemsPerPage, logicalIndex: logicalIndex,
+                      appGroupingFrame: appGroupingFrame)
+    }
+
+    public func mapped(toLogicalIndex index: Int) -> DragItemFrame {
+        DragItemFrame(identity: identity, frame: frame, pageIndex: pageIndex,
+                      itemsPerPage: itemsPerPage, logicalIndex: index, appGroupingFrame: appGroupingFrame)
     }
 }
 
@@ -115,18 +131,24 @@ public struct DragGeometry: Equatable, Sendable {
     /// engine/resolver 消费。默认值兼容既有构造点（coordinator click 路径空
     /// geometry 与既有测试构造不在本波写范围，无法全量更新）。
     public let itemsPerPage: Int
+    /// Non-nil only after the member panel has collapsed. In this presentation,
+    /// the canonical source is still a folder member, but landing belongs to the
+    /// visible main-grid viewport, never to hidden member rows.
+    public let topLevelMoveOutBounds: DragRect?
 
     public init(itemFrames: [DragItemFrame],
                 topLevelFrames: [DragItemFrame]? = nil,
                 containerWidth: Double,
                 page: Int,
                 pageCount: Int,
-                itemsPerPage: Int = 0) {
+                itemsPerPage: Int = 0,
+                topLevelMoveOutBounds: DragRect? = nil) {
         self.itemFrames = itemFrames
         self.topLevelFrames = topLevelFrames ?? itemFrames
         self.containerWidth = containerWidth
         self.page = page
         self.pageCount = pageCount
         self.itemsPerPage = itemsPerPage
+        self.topLevelMoveOutBounds = topLevelMoveOutBounds
     }
 }

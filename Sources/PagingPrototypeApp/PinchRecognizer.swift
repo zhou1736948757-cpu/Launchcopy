@@ -7,7 +7,7 @@
 //  纯 Foundation 值类型：无 AppKit、无锁、无真实设备访问、不持久化触点数据。
 //  设备标识 = 进程内不透明 token（不写盘、不跨运行关联）。
 //  时钟 = 可注入单调时钟（生产 PinchSystemClock 用 systemUptime；禁止墙钟 Date 差值）。
-//  输出 = 只发 show(source: fourFingerPinch, eventToken:) 等价语义（§21.1）；无 hide 事件（P17）。
+//  Output: inward Show, plus optional outward Hide requests; no presentation or window effects.
 //  判定模型（T-G-P6 定案，参照 LaunchBetter PinchAnalyzer 语义）：候选段首帧恰好 4 触点即建立基线半径，
 //  每帧按 (baselineRadius - currentRadius) / baselineRadius >= shrinkThreshold 判定触发；
 //  无稳定窗口、无噪声容忍、无重锚定（实机证据：快速捏合无静止段，稳定窗口模型无法识别，见 results/T-G-P6.md §R-03/R-04）。
@@ -107,8 +107,10 @@ public struct PinchParameters: Equatable, Sendable {
     public var requiredContactCount: Int
     /// 归一化收缩触发阈值（合同 3；T-G-P6 首帧基线模型：相对首帧半径收缩 ≥ 阈值触发）。
     public var shrinkThreshold: Double
-    /// 归一化扩张取消阈值（P17：pinchOut 无 Hide；扩张超限取消候选）。
+    /// Original expansion-cancel threshold, used only when outward Hide is disabled.
     public var expansionCancelThreshold: Double
+    /// Independent opt-in outward growth calibration; never changes the inward threshold.
+    public var outwardGrowthThreshold: Double
     /// 手势时间上限（合同 3；候选超限取消；T-G-P6 定案 3.5s，慢速手势候选到触发 1.6-3.2s）。
     public var maxGestureDuration: TimeInterval
     /// 触发后冷却（合同 7：附加保护，不是重新武装唯一条件；单调时钟、识别器级，跨会话/跨设备）。
@@ -128,11 +130,13 @@ public struct PinchParameters: Equatable, Sendable {
         cooldown: TimeInterval = 0.5,
         maxContactCount: Int = 8,
         minBaselineRadius: Double = 0.02,
-        dataExpiryInterval: TimeInterval = 0.5
+        dataExpiryInterval: TimeInterval = 0.5,
+        outwardGrowthThreshold: Double = 0.15
     ) {
         self.requiredContactCount = requiredContactCount
         self.shrinkThreshold = shrinkThreshold
         self.expansionCancelThreshold = expansionCancelThreshold
+        self.outwardGrowthThreshold = outwardGrowthThreshold
         self.maxGestureDuration = maxGestureDuration
         self.cooldown = cooldown
         self.maxContactCount = maxContactCount
@@ -187,9 +191,10 @@ public struct PinchEventToken: Equatable, Sendable {
     }
 }
 
-/// 识别器输出事件（§21.1：只发 show(source: fourFingerPinch, eventToken:) 等价语义；无 hide 事件，P17）。
+/// Pure action requests. The caller owns presentation, readiness, and effects.
 public enum PinchEvent: Equatable, Sendable {
     case showRequested(token: PinchEventToken)
+    case hideRequested(token: PinchEventToken)
 }
 
 // MARK: - 会话内部状态
@@ -213,6 +218,8 @@ private struct PinchDeviceSession: Sendable {
     var contactIDs: Set<PinchContactID>
     /// 最近一帧时间戳（乱序判定）。
     var lastSeenTimestamp: TimeInterval
+    /// Admission can only become more restrictive until release.
+    var outwardHideAdmitted: Bool
 }
 
 // MARK: - 识别器
@@ -237,10 +244,19 @@ public struct PinchRecognizer: Sendable {
     /// 最近活跃会话。
     public private(set) var activeSessionID: PinchSessionID?
 
+    public private(set) var outwardHideEnabled: Bool = false
+    /// Explicit release quarantine outlives turning the optional mode off.
+    var requiresValidatedFrameTime: Bool { outwardHideEnabled || !modeChangeAwaitingRelease.isEmpty }
+
     public var parameters: PinchParameters
     private let clock: PinchClock
     private var sessions: [PinchDeviceID: PinchDeviceSession]
     private var nextSessionID: Int
+    // Track first contact even before all four fingers land. No positions are retained.
+    private var outwardAdmissionByDevice: [PinchDeviceID: Bool] = [:]
+    private var lastContactTimestampByDevice: [PinchDeviceID: TimeInterval] = [:]
+    /// Mode, delivery and lifecycle quarantine; only release or disconnect clears it.
+    private var modeChangeAwaitingRelease: Set<PinchDeviceID> = []
     private var suspendedReason: PinchSuspensionReason?
     /// 最近触发时刻（识别器级冷却，跨会话/跨设备）。
     private var lastFireTime: TimeInterval?
@@ -271,10 +287,36 @@ public struct PinchRecognizer: Sendable {
         state != .disabled
     }
 
-    /// 是否处于挂起状态。
-    private var isSuspended: Bool {
-        if case .suspended = state { return true }
-        return false
+    /// An actual mode edit invalidates both directions without restarting the provider.
+    /// Contacts already on the surface must release before either direction can fire.
+    public mutating func setOutwardHideEnabled(_ enabled: Bool) {
+        guard outwardHideEnabled != enabled else { return }
+        outwardHideEnabled = enabled
+        invalidateActionGenerationHoldingContacts()
+    }
+
+    /// Coordinator-only fence for parent/backend invalidation in optional mode.
+    mutating func invalidateOutwardHideRequests() {
+        guard outwardHideEnabled else { return }
+        invalidateActionGenerationHoldingContacts()
+    }
+
+    /// A discarded delivery may be the first evidence of contacts on this device.
+    /// Quarantine it and invalidate known sessions without starting recognition.
+    mutating func requireReleaseAfterDeliveryInvalidation(_ device: PinchDeviceID) {
+        modeChangeAwaitingRelease.insert(device)
+        invalidateActionGenerationHoldingContacts()
+    }
+
+    private mutating func invalidateActionGenerationHoldingContacts() {
+        generation += 1
+        modeChangeAwaitingRelease.formUnion(outwardAdmissionByDevice.keys)
+        modeChangeAwaitingRelease.formUnion(sessions.keys)
+        for device in Array(sessions.keys) {
+            sessions[device]?.phase = .waitingForRelease
+            sessions[device]?.outwardHideAdmitted = false
+        }
+        refreshAggregateState()
     }
 
     // MARK: - 生命周期
@@ -317,6 +359,7 @@ public struct PinchRecognizer: Sendable {
     /// 挂起（sleep / session inactive / 屏幕重配）：清基线/会话/待派发意图（合同 11）。
     public mutating func suspend(reason: PinchSuspensionReason) {
         guard state != .disabled else { return }
+        if outwardHideEnabled || !modeChangeAwaitingRelease.isEmpty { generation += 1 }
         clearAllSessions(reason: .suspended)
         suspendedReason = reason
         state = .suspended(reason: reason)
@@ -331,17 +374,20 @@ public struct PinchRecognizer: Sendable {
 
     /// 设备断开（可靠结束证据；移除该设备会话，P10）。
     public mutating func deviceDisconnected(_ deviceID: PinchDeviceID) {
-        guard state != .disabled, !isSuspended else { return }
+        // Disconnection is reliable release evidence even while stopped or suspended.
         if sessions.removeValue(forKey: deviceID) != nil {
             recordCancel(.disconnected)
         }
+        outwardAdmissionByDevice.removeValue(forKey: deviceID)
+        lastContactTimestampByDevice.removeValue(forKey: deviceID)
+        modeChangeAwaitingRelease.remove(deviceID)
         refreshAggregateState()
     }
 
     // MARK: - 帧处理
 
     /// 处理一帧（provider 交付；返回本帧产生的事件）。
-    public mutating func process(_ frame: PinchFrame) -> [PinchEvent] {
+    public mutating func process(_ frame: PinchFrame, allowOutwardHide: Bool = true) -> [PinchEvent] {
         switch state {
         case .disabled, .suspended:
             return [] // P13：开关关闭/暂停后 late callback 丢弃
@@ -350,19 +396,38 @@ public struct PinchRecognizer: Sendable {
         }
 
         // 合同 10：非有限数 / 非法计数 / 重复触点 / 负时间戳安全拒绝
-        guard validateFrame(frame) else { return [] }
+        guard validateFrame(frame) else {
+            rejectOutwardFrame(frame)
+            return []
+        }
 
         let now = clock.now()
+        guard now.isFinite, now >= 0 else {
+            rejectedFrameCount += 1
+            rejectOutwardFrame(frame)
+            return []
+        }
 
         // 合同 10/12：未来帧拒绝；过期帧拒绝
         guard frame.timestamp <= now else {
             rejectedFrameCount += 1
+            rejectOutwardFrame(frame)
             return []
         }
         // 绝对年龄（合同 10）：帧时间戳相对识别时钟过期则拒绝。
-        // 生产异步交付路径在 ActivationComposition 对齐时间戳后再调用，避免误杀活流。
+        // Optional Hide retains provider timestamps so delivery delay cannot renew a gesture.
         guard now - frame.timestamp <= parameters.dataExpiryInterval + Self.timeEpsilon else {
             rejectedFrameCount += 1
+            rejectOutwardFrame(frame)
+            return []
+        }
+
+        // Optional mode never accepts an out-of-order release as new admission.
+        if (outwardHideEnabled || modeChangeAwaitingRelease.contains(frame.deviceID)),
+           let lastTimestamp = lastContactTimestampByDevice[frame.deviceID],
+           frame.timestamp < lastTimestamp {
+            rejectedFrameCount += 1
+            rejectOutwardFrame(frame)
             return []
         }
 
@@ -371,14 +436,30 @@ public struct PinchRecognizer: Sendable {
            now - session.lastSeenTimestamp > parameters.dataExpiryInterval + Self.timeEpsilon {
             switch session.phase {
             case .candidate, .recognizing:
-                sessions.removeValue(forKey: frame.deviceID)
-                recordCancel(.dataExpired)
+                if outwardHideEnabled {
+                    var expired = session
+                    cancelSession(&expired, reason: .dataExpired)
+                    expired.outwardHideAdmitted = false
+                    sessions[frame.deviceID] = expired
+                    outwardAdmissionByDevice[frame.deviceID] = false
+                } else {
+                    sessions.removeValue(forKey: frame.deviceID)
+                    recordCancel(.dataExpired)
+                }
                 // T-G-P7 R-08（M-1 修复）：静默移除后立即刷新聚合状态（与 deviceDisconnected/endSession 一致），
                 // 否则同帧触点数 ≠ 4 提前 return 时 state 会停留在 .candidate/.recognizing 而 sessions 已空。
                 refreshAggregateState()
             case .fired, .waitingForRelease:
                 break
             }
+        }
+
+        // Terminal phases with held contacts cannot establish a release in optional mode.
+        if (outwardHideEnabled || modeChangeAwaitingRelease.contains(frame.deviceID)), !frame.contacts.isEmpty,
+           frame.phase == .ended || frame.phase == .cancelled {
+            rejectedFrameCount += 1
+            rejectOutwardFrame(frame)
+            return []
         }
 
         // 结束证据（P10）：零触点 moved / ended / cancelled
@@ -390,8 +471,20 @@ public struct PinchRecognizer: Sendable {
         // began 帧必须带触点（0 触点 began 为畸形帧，拒绝）
         if frame.phase == .began && frame.contacts.isEmpty {
             rejectedFrameCount += 1
+            rejectOutwardFrame(frame)
             return []
         }
+
+        if !frame.contacts.isEmpty {
+            if outwardHideEnabled, let lastTimestamp = lastContactTimestampByDevice[frame.deviceID],
+               now - lastTimestamp > parameters.dataExpiryInterval + Self.timeEpsilon {
+                outwardAdmissionByDevice[frame.deviceID] = false
+            }
+            lastContactTimestampByDevice[frame.deviceID] = frame.timestamp
+            outwardAdmissionByDevice[frame.deviceID] =
+                (outwardAdmissionByDevice[frame.deviceID] ?? true) && allowOutwardHide
+        }
+        guard !modeChangeAwaitingRelease.contains(frame.deviceID) else { return [] }
 
         // 无会话：恰好 requiredContactCount 触点才建立候选（合同 1；P04）
         guard let existing = sessions[frame.deviceID] else {
@@ -411,6 +504,8 @@ public struct PinchRecognizer: Sendable {
 
         var session = existing
         session.lastSeenTimestamp = frame.timestamp
+        session.outwardHideAdmitted = session.outwardHideAdmitted &&
+            (outwardAdmissionByDevice[frame.deviceID] ?? false)
         let events = advance(session: &session, frame: frame, now: now)
         sessions[frame.deviceID] = session
         refreshAggregateState()
@@ -420,7 +515,7 @@ public struct PinchRecognizer: Sendable {
     // MARK: - 内部
 
     private mutating func validateFrame(_ frame: PinchFrame) -> Bool {
-        guard frame.timestamp >= 0 else {
+        guard frame.timestamp.isFinite, frame.timestamp >= 0 else {
             rejectedFrameCount += 1
             return false
         }
@@ -451,7 +546,8 @@ public struct PinchRecognizer: Sendable {
             candidateStartedAt: timestamp,
             baselineRadius: nil,
             contactIDs: [],
-            lastSeenTimestamp: timestamp
+            lastSeenTimestamp: timestamp,
+            outwardHideAdmitted: outwardAdmissionByDevice[deviceID] ?? false
         )
     }
 
@@ -497,7 +593,7 @@ public struct PinchRecognizer: Sendable {
         // 首帧基线（T-G-P6 R-05：参照 LaunchBetter PinchAnalyzer 语义；无稳定窗口/无噪声容忍/无重锚定）
         let positions = Dictionary(uniqueKeysWithValues: frame.contacts.map { ($0.id, $0.position) })
         let baselineRadius = radius(of: positions)
-        guard baselineRadius >= parameters.minBaselineRadius else {
+        guard baselineRadius.isFinite, baselineRadius > 0, baselineRadius >= parameters.minBaselineRadius else {
             cancelSession(&session, reason: .degenerateGeometry)
             return []
         }
@@ -514,7 +610,15 @@ public struct PinchRecognizer: Sendable {
         }
         // 每帧判定（T-G-P6：相对首帧基线，无重锚定；触发后 startDistance 更新语义不适用——本状态机锁存 fired，一会话一次）
         let currentRadius = radius(of: Dictionary(uniqueKeysWithValues: frame.contacts.map { ($0.id, $0.position) }))
+        guard currentRadius.isFinite else {
+            cancelSession(&session, reason: .degenerateGeometry)
+            return []
+        }
         let contraction = (baselineRadius - currentRadius) / baselineRadius
+        guard contraction.isFinite else {
+            cancelSession(&session, reason: .degenerateGeometry)
+            return []
+        }
 
         if contraction >= parameters.shrinkThreshold {
             // 冷却（合同 7：附加保护；识别器级，跨会话/跨设备）
@@ -531,6 +635,32 @@ public struct PinchRecognizer: Sendable {
             return [.showRequested(token: token)]
         }
 
+        if outwardHideEnabled {
+            // Keep the original expansion-cancel path exclusively in inward-only mode.
+            // Invalid outward configuration fails closed without changing inward tuning.
+            guard parameters.requiredContactCount == 4,
+                  parameters.outwardGrowthThreshold.isFinite,
+                  parameters.outwardGrowthThreshold > 0 else { return [] }
+            if contraction <= -parameters.outwardGrowthThreshold {
+                // Refusal and cooldown both consume this contact session, including reversals.
+                session.phase = .fired
+                guard session.outwardHideAdmitted else {
+                    suppressedFireCount += 1
+                    return []
+                }
+                if let last = lastFireTime, now - last < parameters.cooldown - Self.timeEpsilon {
+                    suppressedFireCount += 1
+                    return []
+                }
+                lastFireTime = now
+                fireCount += 1
+                lastFireLatency = now - session.candidateStartedAt
+                let token = PinchEventToken(generation: generation, sessionID: session.sessionID)
+                return [.hideRequested(token: token)]
+            }
+            return []
+        }
+
         if contraction <= -parameters.expansionCancelThreshold {
             // P17：pinchOut 无 Hide；扩张超限取消候选（锁存至释放，合同 8）
             cancelSession(&session, reason: .expansion)
@@ -545,12 +675,40 @@ public struct PinchRecognizer: Sendable {
         recordCancel(reason)
     }
 
+    /// Reject malformed optional input without logging frames or treating silence as release.
+    private mutating func rejectOutwardFrame(_ frame: PinchFrame) {
+        guard outwardHideEnabled || modeChangeAwaitingRelease.contains(frame.deviceID) else { return }
+        outwardAdmissionByDevice[frame.deviceID] = false
+        modeChangeAwaitingRelease.insert(frame.deviceID)
+        sessions[frame.deviceID]?.phase = .waitingForRelease
+        sessions[frame.deviceID]?.outwardHideAdmitted = false
+        refreshAggregateState()
+    }
+
     private mutating func endSession(_ deviceID: PinchDeviceID) {
+        outwardAdmissionByDevice.removeValue(forKey: deviceID)
+        lastContactTimestampByDevice.removeValue(forKey: deviceID)
+        modeChangeAwaitingRelease.remove(deviceID)
         sessions.removeValue(forKey: deviceID)
         refreshAggregateState()
     }
 
     private mutating func clearAllSessions(reason: PinchCancelReason?) {
+        // Lifecycle changes discard recognition data, not physical release evidence.
+        // A never-enabled recognizer with no explicit quarantine keeps legacy resets.
+        if outwardHideEnabled {
+            modeChangeAwaitingRelease.formUnion(outwardAdmissionByDevice.keys)
+            modeChangeAwaitingRelease.formUnion(sessions.keys)
+        }
+        outwardAdmissionByDevice.removeAll()
+        if modeChangeAwaitingRelease.isEmpty {
+            lastContactTimestampByDevice.removeAll()
+        } else {
+            // Keep ordering evidence so an old zero-contact frame cannot lift a gate.
+            lastContactTimestampByDevice = lastContactTimestampByDevice.filter {
+                modeChangeAwaitingRelease.contains($0.key)
+            }
+        }
         if !sessions.isEmpty {
             if let reason = reason {
                 recordCancel(reason)

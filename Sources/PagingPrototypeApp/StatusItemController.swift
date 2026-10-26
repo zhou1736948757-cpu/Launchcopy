@@ -14,6 +14,7 @@
 
 import AppKit
 import Foundation
+import LauncherLocalization
 
 // MARK: - Status bar seam（可注入；测试用 Fake，生产用 System）
 
@@ -179,6 +180,17 @@ public final class StatusItemController: NSObject, NSMenuItemValidation {
         super.init()
     }
 
+    private var languageStrings: LocalizedStrings?
+
+    public func relabel(strings: LocalizedStrings) {
+        languageStrings = strings
+        refreshMenuTitles()
+    }
+
+    private func localizedShowHideTitle(visible: Bool) -> String {
+        languageStrings?.text(visible ? .hideLauncher : .showLauncher) ?? Self.showHideTitle(visible: visible)
+    }
+
     // MARK: - Lifecycle
 
     /// 按 `showStatusItem` 安装；false → 不创建；创建失败 → installFailed，不崩溃。
@@ -234,7 +246,7 @@ public final class StatusItemController: NSObject, NSMenuItemValidation {
         menu.autoenablesItems = true
 
         let showHide = NSMenuItem(
-            title: Self.showHideTitle(visible: visibilityProvider()),
+            title: localizedShowHideTitle(visible: visibilityProvider()),
             action: #selector(showHideAction(_:)),
             keyEquivalent: ""
         )
@@ -243,7 +255,7 @@ public final class StatusItemController: NSObject, NSMenuItemValidation {
         menu.addItem(showHide)
 
         let settings = NSMenuItem(
-            title: ActivationSettingsUIStrings.menuActivationSettings,
+            title: languageStrings.map { $0.text(.settingsTitle) + "…" } ?? ActivationSettingsUIStrings.menuActivationSettings,
             action: #selector(activationSettingsAction(_:)),
             keyEquivalent: ""
         )
@@ -254,7 +266,7 @@ public final class StatusItemController: NSObject, NSMenuItemValidation {
         menu.addItem(NSMenuItem.separator())
 
         let quit = NSMenuItem(
-            title: ActivationSettingsUIStrings.menuQuit,
+            title: languageStrings?.text(.quitLauncher) ?? ActivationSettingsUIStrings.menuQuit,
             action: #selector(quitAction(_:)),
             keyEquivalent: ""
         )
@@ -276,7 +288,11 @@ public final class StatusItemController: NSObject, NSMenuItemValidation {
     public func refreshMenuTitles() {
         guard let menu = statusItem?.menu else { return }
         if let item = menu.item(withTag: MenuActionTag.showHide.rawValue) {
-            item.title = Self.showHideTitle(visible: visibilityProvider())
+            item.title = localizedShowHideTitle(visible: visibilityProvider())
+        }
+        if let strings = languageStrings {
+            menu.item(withTag: MenuActionTag.activationSettings.rawValue)?.title = strings.text(.settingsTitle) + "…"
+            menu.item(withTag: MenuActionTag.quit.rawValue)?.title = strings.text(.quitLauncher)
         }
     }
 
@@ -286,7 +302,7 @@ public final class StatusItemController: NSObject, NSMenuItemValidation {
         switch MenuActionTag(rawValue: menuItem.tag) {
         case .showHide:
             let visible = visibilityProvider()
-            menuItem.title = Self.showHideTitle(visible: visible)
+            menuItem.title = localizedShowHideTitle(visible: visible)
             return true
         case .activationSettings, .quit:
             return true

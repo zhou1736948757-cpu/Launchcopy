@@ -5,7 +5,7 @@
 //  Phase 1H T-1H-A：Settings 域草稿 / 校验 / 事务性 apply plan（纯 Foundation）。
 //  PHASE1H §6.1–§6.2：Draft → Validation & planning →（后续任务）Runtime application。
 //  - 比较已提交 ActivationPreferences 与草稿，产出确定性有序步骤；
-//  - 步骤顺序固定：status item → hot corner → shortcut → fourFinger → launchAtLogin；
+//  - 步骤顺序固定：status item → hot corner → shortcut → fourFinger → outwardHide → launchAtLogin；
 //  - 回滚 = 成功步骤的逆序（恢复旧目标值）；
 //  - 失败映射：指出失败步骤 + 仅回滚已成功前缀，语义为恢复先前已接受配置（不持久化草稿）。
 //  本文件无 AppKit、无 SMAppService；Launch at Login 仅布尔目标值。
@@ -18,6 +18,7 @@ import Foundation
 /// Settings UI 可变草稿（纯值；不直接写 UserDefaults / 系统服务）。
 public struct ActivationPreferencesDraft: Equatable, Sendable {
     public var fourFingerActivationEnabled: Bool
+    public var fourFingerOutwardHideEnabled: Bool
     public var hotCornerEnabled: Bool
     public var selectedCorner: HotCorner?
     public var globalShortcutEnabled: Bool
@@ -27,6 +28,7 @@ public struct ActivationPreferencesDraft: Equatable, Sendable {
 
     public init(
         fourFingerActivationEnabled: Bool = true,
+        fourFingerOutwardHideEnabled: Bool = false,
         hotCornerEnabled: Bool = false,
         selectedCorner: HotCorner? = nil,
         globalShortcutEnabled: Bool = false,
@@ -35,6 +37,7 @@ public struct ActivationPreferencesDraft: Equatable, Sendable {
         launchAtLoginEnabled: Bool = false
     ) {
         self.fourFingerActivationEnabled = fourFingerActivationEnabled
+        self.fourFingerOutwardHideEnabled = fourFingerOutwardHideEnabled
         self.hotCornerEnabled = hotCornerEnabled
         self.selectedCorner = selectedCorner
         self.globalShortcutEnabled = globalShortcutEnabled
@@ -46,6 +49,7 @@ public struct ActivationPreferencesDraft: Equatable, Sendable {
     /// 从已提交偏好生成草稿。
     public init(committed: ActivationPreferences) {
         fourFingerActivationEnabled = committed.fourFingerActivationEnabled
+        fourFingerOutwardHideEnabled = committed.fourFingerOutwardHideEnabled
         hotCornerEnabled = committed.settings.hotCornerEnabled
         selectedCorner = committed.settings.selectedCorner
         globalShortcutEnabled = committed.settings.globalShortcutEnabled
@@ -66,6 +70,7 @@ public struct ActivationPreferencesDraft: Equatable, Sendable {
         return ActivationPreferences(
             schemaVersion: ActivationPreferences.currentSchemaVersion,
             fourFingerActivationEnabled: fourFingerActivationEnabled,
+            fourFingerOutwardHideEnabled: fourFingerOutwardHideEnabled,
             settings: settings
         )
     }
@@ -127,6 +132,8 @@ public enum ActivationApplyStep: Equatable, Sendable {
     /// `nil` = 注销全局快捷键。
     case shortcut(ShortcutSpec?)
     case fourFinger(enabled: Bool)
+    /// Saved mode choice; parent activation controls effective readiness separately.
+    case fourFingerOutwardHide(enabled: Bool)
     case launchAtLogin(enabled: Bool)
 
     public var target: ActivationApplyStepTarget {
@@ -134,7 +141,7 @@ public enum ActivationApplyStep: Equatable, Sendable {
         case .statusItem: return .statusItem
         case .hotCorner: return .hotCorner
         case .shortcut: return .shortcut
-        case .fourFinger: return .fourFinger
+        case .fourFinger, .fourFingerOutwardHide: return .fourFinger
         case .launchAtLogin: return .launchAtLogin
         }
     }
@@ -233,7 +240,7 @@ public enum ActivationApplyPlanner {
 
     // MARK: Diff
 
-    /// 固定顺序 diff：statusItem → hotCorner → shortcut → fourFinger → launchAtLogin。
+    /// 固定顺序 diff：statusItem → hotCorner → shortcut → fourFinger → outwardHide → launchAtLogin。
     /// 回滚序列 = 正向变更的逆序旧值。
     public static func diffSteps(
         from committed: ActivationPreferences,
@@ -263,6 +270,10 @@ public enum ActivationApplyPlanner {
         consider(
             old: .fourFinger(enabled: committed.fourFingerActivationEnabled),
             new: .fourFinger(enabled: proposed.fourFingerActivationEnabled)
+        )
+        consider(
+            old: .fourFingerOutwardHide(enabled: committed.fourFingerOutwardHideEnabled),
+            new: .fourFingerOutwardHide(enabled: proposed.fourFingerOutwardHideEnabled)
         )
         consider(
             old: .launchAtLogin(enabled: committed.settings.launchAtLoginEnabled),

@@ -19,7 +19,9 @@ public enum LaunchAtLoginStatus: Equatable, Sendable {
     case enabled
     case requiresApproval
     case unavailable
+    /// Legacy/injected native detail remains literal. App-authored failures use typed direction.
     case failure(message: String)
+    case operationFailed(enabling: Bool)
 }
 
 // MARK: - Protocol
@@ -119,21 +121,7 @@ public final class SMAppServiceLaunchAtLoginService: LaunchAtLoginServicing {
             return Self.mapStatus(service.status)
         } catch {
             // 注册/注销失败后仍读一次真实 status；若已是 requiresApproval 等，优先暴露系统态。
-            let mapped = Self.mapStatus(service.status)
-            switch mapped {
-            case .requiresApproval, .enabled, .disabled, .unavailable:
-                // 系统已给出可操作态时，保留该态（truthful displayed state）。
-                // 若 register 抛错但 status 仍 notRegistered，则降为中性 failure。
-                if enabled, mapped == .disabled {
-                    return .failure(message: Self.neutralFailureMessage(for: error, enabling: enabled))
-                }
-                if !enabled, mapped == .enabled {
-                    return .failure(message: Self.neutralFailureMessage(for: error, enabling: enabled))
-                }
-                return mapped
-            case .failure:
-                return .failure(message: Self.neutralFailureMessage(for: error, enabling: enabled))
-            }
+            return Self.statusAfterFailedOperation(mapped: Self.mapStatus(service.status), enabling: enabled)
         }
     }
 
@@ -151,6 +139,17 @@ public final class SMAppServiceLaunchAtLoginService: LaunchAtLoginServicing {
             return .unavailable
         @unknown default:
             return .unavailable
+        }
+    }
+
+    /// Shared by the actual catch route and tests; never invokes register/unregister.
+    /// An exception does not override a truthful enabled/disabled/approval/unavailable state.
+    static func statusAfterFailedOperation(mapped: LaunchAtLoginStatus, enabling: Bool) -> LaunchAtLoginStatus {
+        switch mapped {
+        case .disabled where enabling: return .operationFailed(enabling: true)
+        case .enabled where !enabling: return .operationFailed(enabling: false)
+        case .failure, .operationFailed: return .operationFailed(enabling: enabling)
+        default: return mapped
         }
     }
 

@@ -1,0 +1,25 @@
+# Renderer Missing-Host Retirement — Bounded Maintenance
+
+Date:2026-10-17
+Status: REPRODUCTION_PENDING
+
+## Problem and scope
+Capacity discovery identified an existing source weakness: AppGridRenderer.sweepRetiredHosts skips a page when its weak host is nil. Reproduce using actual mounted/rendered AppKit hosts that are removed/released, then repair only proven retirement. This is existing UI/resource lifecycle maintenance under the resumed parity/performance objective, not implementation of the unconfirmed capacity feature.
+
+## Ownership and invariants
+Main owns a new dedicated test file and the one renderer sweep in AppCatalogAssembly.swift; all builds/tests serialized. Independent source review after a stable repair, at mostMain+reviewer2. Preserve PagingCore/PagingUI protocols/physics/parameters, folder/appearance, data, app identities, no new timing/cache/API/resource settings or reference reads. Missing-host retirement is at the next existing sweep; no claim of immediate empty-search cleanup unless tested. No install/sign/commit/reset/clean/delete/processkill/UI or formaldata changes. Current accepted app bdb9a6e3 remains running unchanged.
+
+## Verification plan
+Actual RED tests for explicit sweep after host deallocation and next-render sweep/reuse with distinct indices; retain mounted host content negative control and existing renderer regression suite. Repair only after RED confirms. Focused/full nonzero XCTest + Debug/Release/package/localization, frozen source/candidate hash and bounded source review; native/physical/performance acceptance independent. No whole-process leak or frame-hitch causal claim from source suspicion.
+
+## Reproduction and narrow repair
+Actual renderer RED:3tests/53assertion failures, mounted-page negative control passed and actual weak-host deallocation assertions passed. Released-host pages accumulated across16distinct indices instead of reusing one instance. Only sweepRetiredHosts changed to retire nil weak hosts through existing retire/clear/pool path; mounted hosts unchanged. First focused33tests/1failure exposed an invalid new-test assumption that clearForReuse releases cell allocations; existing design intentionally retains empty cells. Corrected only that assertion to pageIndex/presentationID invalidation, token clearing and same cell allocation; no production change for this test adaptation. Focusedr2 in progress. Freeze465inputs:463existingunchanged,one existing production method changed,one newtestfile. Dalton independent source review in parallel with Main's serial execution; no newnative/performancePASS. Does not claim immediate cleanup on entering zero pages, newiconcancellation or wholeRSScap.
+
+## Current delivery: accepted folder, bounded renderer retirement fix — 2026-10-17
+
+Human “没问题，继续做吧” closes the reported source-origin/folder-local paging experience gate on previous bdb9a6e3, not120Hz/quantitative performance/wholeparity. Current approved maintenance independently reproduced missing weak-host retirement (3REDmethods/53assertion failures including an invalid pooled-cell count assumption), repaired only the existing sweep, corrected that new test's allocation assumption and verified focused33/0 +full2812/0(52.877s), Debug/Release/package/290keys×3languages/gitdiffcheck. Dalton independent SOURCEPASS/zero executions/nativeclaims, closed.465inputfreeze,463baselineunchanged+1prodmethod+1newtest; no Core/UI/physics/store/material changes.
+
+Latest isolated unsigned/uninstalled candidate `.build/candidates/renderer-host-retirement-rc-20261017-r1/LaunchcopyUITest.app`, executable39484896e8fd0ee157077c87502a42232db049af345ddfe2e13c4247904e0f82, NOW RUNNING (process receipt). Old own82034 normally quit and exact absence checked before newlaunch. Actualnative no-match->empty->clear->originalfolder/outerapps restored; glyphopen15/page1of3, nextpage2/members16–30, ESConlyfolderclose. Finalmainwindow/noquery/folderCLOSED. AXcaption-onlyclick didnotopen; successfulglyphclick separatelyobserved. WallpapernewrunstillLOADING/black, knownintermittencyunresolved. No capturedpersonalimagefile, cachecopy, OS/formaldata/reference/sign/install/commit/kill action; ownprofilepayloadhashesunchanged.
+
+Next feature discovery complete, not implementation: main-grid row/column3..8/default5×7 question sent, answerPENDING; independentfolderunchanged. Reports reveal7hosts/448slots per fullpass at64 (NOT wholememorycap), no existing capacityQuitdrain, same-revisionfocus/anchor and minimumreadableviewport gates. Draft `Docs/MAIN_GRID_CAPACITY_SPEC.md` corrected to explicit separate receipt-bearingstore/scopedcontrols/newQuitdrain/existinganchor spring and Librarydeferral; numerical/readability contract still requires authority before crossmodule work. Allagents/buildjobs terminal. FullgoalACTIVE/incomplete, currentturn concretePROGRESS, no oldblockedcounts. Results `Workflow/results/RENDERER_HOST_RETIREMENT_RESULTS.md`; receipt `.build/verification/20261017/renderer-host-retirement/final-receipt.json`. Do not repeat closedgates or infer capacityapproval from generic continuation.
+

@@ -71,14 +71,23 @@ public struct VisibleWorkspaceProjection: Equatable, Sendable {
     /// 投影构建（纯函数；不修改 layout/catalog 任何状态）。
     public static func project(layout: PersistentWorkspaceLayout,
                                catalog: CatalogSnapshot) -> VisibleWorkspaceProjection {
-        // layout 内全部引用键（唯一性由不变量①保证；线性构建）。
-        var layoutRefKeys = Set<String>()
-        for entry in layout.topLevelOrder {
-            if case .app(let ref) = entry { layoutRefKeys.insert(ref.comparisonKey) }
+        // Resolve once, not by rescanning the catalog for every stored reference.
+        // Both keys preserve matches(record:) semantics, including a path reference
+        // to an app which now also has a bundle ID. Stable first match wins.
+        var recordsByReference: [String: AppRecord] = [:]
+        for record in catalog.records {
+            if let bundleID = record.bundleIdentifier {
+                let key = PersistentAppReference.bundleID(bundleID).comparisonKey
+                if recordsByReference[key] == nil { recordsByReference[key] = record }
+            }
+            let pathKey = PersistentAppReference.canonicalPath(
+                PersistentAppReference.normalizedPath(record.canonicalURL)).comparisonKey
+            if recordsByReference[pathKey] == nil { recordsByReference[pathKey] = record }
         }
-        for folder in layout.folders {
-            for member in folder.members { layoutRefKeys.insert(member.comparisonKey) }
-        }
+        let foldersByID = Dictionary(layout.folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // Index stored identities once. A saved path still represents a record
+        // after it gains a bundle ID; do not append its newly preferred identity.
+        let referenceResolver = WorkspaceAppReferenceResolver(layout: layout)
 
         var topLevel: [VisibleTopLevelEntry] = []
         var latent: [PersistentAppReference] = []
@@ -87,17 +96,17 @@ public struct VisibleWorkspaceProjection: Equatable, Sendable {
             switch entry {
             case .app(let ref):
                 // 暂缺 → 隐藏但 latent 保留；重现 → 回原逻辑位置。
-                if let record = resolve(ref, in: catalog) {
+                if let record = recordsByReference[ref.comparisonKey] {
                     topLevel.append(.app(record))
                 } else {
                     latent.append(ref)
                 }
             case .folder(let folderID):
-                guard let folder = layout.folder(id: folderID) else { continue }  // 防御（validator 拦）
+                guard let folder = foldersByID[folderID] else { continue }  // 防御（validator 拦）
                 var available: [AppRecord] = []
                 var latentCount = 0
                 for member in folder.members {
-                    if let record = resolve(member, in: catalog) {
+                    if let record = recordsByReference[member.comparisonKey] {
                         available.append(record)
                     } else {
                         latentCount += 1
@@ -119,8 +128,7 @@ public struct VisibleWorkspaceProjection: Equatable, Sendable {
         // 未编排尾部：catalog 新 app 确定性追加（catalog 稳定序）。
         var unorchestrated: [AppRecord] = []
         for record in catalog.records {
-            let ref = PersistentAppReference.from(record: record)
-            if !layoutRefKeys.contains(ref.comparisonKey) {
+            if referenceResolver.reference(for: record) == nil {
                 unorchestrated.append(record)
             }
         }
@@ -143,11 +151,4 @@ public struct VisibleWorkspaceProjection: Equatable, Sendable {
         topLevel.contains { $0.identity == identity }
     }
 
-    // MARK: - 内部
-
-    /// 确定性解析：同一引用多处命中（`.keepMultiInstance` 类重复）→ 取 catalog 稳定序首个。
-    private static func resolve(_ ref: PersistentAppReference,
-                                in catalog: CatalogSnapshot) -> AppRecord? {
-        catalog.records.first { ref.matches(record: $0) }
-    }
 }

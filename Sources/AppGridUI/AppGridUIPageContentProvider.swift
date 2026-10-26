@@ -25,6 +25,7 @@
 import AppCatalogCore
 import Foundation
 import PagingUI
+import LauncherLocalization
 
 /// 提交后的一页内容（供装配层刷新 PagingSurface presentation）。
 public struct AppGridPresentationUpdate: Sendable, Equatable {
@@ -51,6 +52,14 @@ public struct AppGridPresentationUpdate: Sendable, Equatable {
 /// 内容提供者：只命中内存中已准备内容；未就绪/越界/revision 不匹配 → 中性占位，
 /// 不阻塞手势（§E 约束 ⑤）。
 public final class AppGridUIPageContentProvider: PagingPageContentProviding {
+
+    /// The owner also passes this snapshot to its live and pooled renderer pages.
+    /// Content remains verbatim; a language change is not a catalog/search revision.
+    public private(set) var displayedStrings: LocalizedStrings?
+
+    public func relabel(strings: LocalizedStrings) {
+        displayedStrings = strings
+    }
 
     /// 已提交快照（UI 正在呈现的真相；nil = 未就绪 → 全部占位）。
     /// 语义 = base snapshot（完整目录，来自 refresh commit；§9.3）。
@@ -88,6 +97,23 @@ public final class AppGridUIPageContentProvider: PagingPageContentProviding {
     /// 待提交 folder 快照（latest-wins：连续 receiveFolderSnapshot 只保留最新）。
     public private(set) var pendingFolderSnapshot: FolderSnapshot?
     public var hasPendingFolderSnapshot: Bool { pendingFolderSnapshot != nil }
+    /// Canonical organization remains intact when metadata hides displayed entries.
+    public private(set) var canonicalPresentationEntries: [TopLevelEntry] = []
+    public private(set) var canonicalPresentationGeneration: UInt64 = 0
+    public private(set) var canonicalFolderSnapshot: FolderSnapshot?
+    public private(set) var expectedLayout: PersistentWorkspaceLayout?
+    public private(set) var managementPreferences = AppManagementPreferences.default
+    private var pendingManagementPreferences: AppManagementPreferences?
+    private var pendingExpectedLayout: PersistentWorkspaceLayout?
+    private var recordsByID: [AppID: AppRecord] = [:]
+
+    /// A presentation-retention decision must not hide work queued by another owner.
+    /// This aggregate is read-only; the ordinary commit still consumes pending state.
+    public var hasPendingPresentationChanges: Bool {
+        pendingSnapshot != nil || pendingFolderSnapshot != nil
+            || pendingManagementPreferences != nil || pendingExpectedLayout != nil
+            || pendingSearchResult != nil
+    }
 
     /// 与 PagingSurface 默认对齐的每页 item 数（可被 content(for:itemsPerPage:) 覆盖）。
     public static let defaultItemsPerPage = 35
@@ -98,11 +124,14 @@ public final class AppGridUIPageContentProvider: PagingPageContentProviding {
 
     public init(snapshot: CatalogSnapshot? = nil, folderSnapshot: FolderSnapshot? = nil) {
         self.servedSnapshot = snapshot
+        if let snapshot { recordsByID = Dictionary(snapshot.records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }) }
         self.servedFolderSnapshot = folderSnapshot
+        self.canonicalFolderSnapshot = folderSnapshot
         if let snapshot {
             let folders = folderSnapshot ?? FolderSnapshot(generation: .zero, entries: [])
             let composition = TopLevelComposition.build(catalog: snapshot, folders: folders)
             self.presentationEntries = composition
+            self.canonicalPresentationEntries = composition
             self.presentationRecords = Self.appOnlyProjection(composition)
         } else {
             self.presentationEntries = []
@@ -121,6 +150,26 @@ public final class AppGridUIPageContentProvider: PagingPageContentProviding {
     public func discardPending() {
         pendingSnapshot = nil
     }
+
+    public func receiveManagementPreferences(_ preferences: AppManagementPreferences) {
+        guard preferences.isValid else { return }
+        pendingManagementPreferences = preferences != managementPreferences ? preferences : nil
+    }
+
+    /// Supports asynchronous restore before the first scan has committed.
+    public func receiveExpectedLayout(_ layout: PersistentWorkspaceLayout) {
+        pendingExpectedLayout = layout
+    }
+
+    public func displayName(for appID: AppID) -> String? {
+        recordsByID[appID].map { managementPreferences.displayName(for: $0) }
+    }
+
+    public func isHidden(_ appID: AppID) -> Bool {
+        recordsByID[appID].map { managementPreferences.isHidden($0) } ?? false
+    }
+
+    public func record(for appID: AppID) -> AppRecord? { recordsByID[appID] }
 
     // MARK: - Folder 快照接收（latest-wins；folder 层绝不 mint/forge CatalogRevision）
 
@@ -160,14 +209,15 @@ public final class AppGridUIPageContentProvider: PagingPageContentProviding {
         }
         if query?.isEmpty ?? true {
             // 空 query → 恢复完整顶层组合（apps + folders）。
-            let folders = servedFolderSnapshot ?? FolderSnapshot(generation: .zero, entries: [])
-            let composition = TopLevelComposition.build(catalog: base, folders: folders)
+            let composition = managedComposition(canonicalPresentationEntries, catalog: base,
+                                                 preferences: managementPreferences)
             presentationEntries = composition
             presentationRecords = Self.appOnlyProjection(composition)
         } else {
             // 非空 query → app-only（成员扁平化）。
-            presentationEntries = result.records.map { .app($0) }
-            presentationRecords = result.records
+            let records = managementPreferences.visibleRecords(result.records)
+            presentationEntries = records.map { .app($0) }
+            presentationRecords = records
         }
         activeQuery = query
         pendingSearchResult = nil
@@ -187,7 +237,8 @@ public final class AppGridUIPageContentProvider: PagingPageContentProviding {
     @discardableResult
     public func applyPending(atCurrentPage currentPage: Int, itemsPerPage: Int = AppGridUIPageContentProvider.defaultItemsPerPage)
         -> AppGridPresentationUpdate? {
-        guard pendingSnapshot != nil || pendingFolderSnapshot != nil else { return nil }
+        guard pendingSnapshot != nil || pendingFolderSnapshot != nil ||
+                pendingManagementPreferences != nil || pendingExpectedLayout != nil else { return nil }
         let previousRevision = servedRevision
         let anchor = topLevelAnchorCandidate(nearPage: currentPage, itemsPerPage: itemsPerPage)
 
@@ -202,19 +253,41 @@ public final class AppGridUIPageContentProvider: PagingPageContentProviding {
         }
 
         // 新 folder 快照：pending 优先，否则对 served 收缩；均对 newBase 收缩（新 generation）。
-        let newFolder: FolderSnapshot?
+        let rawFolder: FolderSnapshot?
         if let pendingFolder = pendingFolderSnapshot {
-            newFolder = rebaseFolder(pendingFolder, against: newBase)
-        } else if let servedFolder = servedFolderSnapshot {
-            newFolder = rebaseFolder(servedFolder, against: newBase)
+            rawFolder = pendingFolder
+        } else if let canonicalFolder = canonicalFolderSnapshot {
+            rawFolder = canonicalFolder
         } else {
-            newFolder = nil
+            rawFolder = nil
         }
 
         // 顶层组合（app + folder；单成员解散为 app 条目；空 folder 移除）。
-        let composition = TopLevelComposition.build(
-            catalog: newBase,
-            folders: newFolder ?? FolderSnapshot(generation: .zero, entries: []))
+        let layout = pendingExpectedLayout ?? expectedLayout
+        let preferences = pendingManagementPreferences ?? managementPreferences
+        let canonical: [TopLevelEntry]
+        if let layout {
+            canonical = VisibleWorkspaceProjection.project(layout: layout, catalog: newBase).topLevel.map {
+                switch $0 {
+                case .app(let record): return .app(record)
+                case .folder(let folder):
+                    return .folder(FolderEntry(id: folder.id, title: folder.title,
+                                              members: folder.availableMembers.map(\.id)))
+                }
+            }
+        } else {
+            let rebased = rawFolder.map { rebaseFolder($0, against: newBase) }
+            canonical = TopLevelComposition.build(catalog: newBase,
+                folders: rebased ?? FolderSnapshot(generation: .zero, entries: []))
+        }
+        let composition = managedComposition(canonical, catalog: newBase, preferences: preferences)
+        let folderGeneration = (servedFolderSnapshot?.generation ?? .zero).incremented()
+        let visibleFolders = composition.compactMap { entry -> FolderEntry? in
+            if case .folder(let folder) = entry { return folder }
+            return nil
+        }
+        let newFolder = rawFolder != nil || layout != nil
+            ? FolderSnapshot(generation: folderGeneration, entries: visibleFolders) : nil
 
         // 五级降级 remap（app-only 委托 CatalogPlanner；混合用组合感知 remap）。
         let (pageCount, outcome) = remapComposition(composition, anchor: anchor,
@@ -225,11 +298,19 @@ public final class AppGridUIPageContentProvider: PagingPageContentProviding {
 
         // 原子提交。
         servedSnapshot = newBase
+        recordsByID = Dictionary(newBase.records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        canonicalPresentationEntries = canonical
+        canonicalPresentationGeneration &+= 1
+        canonicalFolderSnapshot = rawFolder
+        expectedLayout = layout
+        managementPreferences = preferences
         servedFolderSnapshot = newFolder
         presentationEntries = composition
         presentationRecords = Self.appOnlyProjection(composition)
         pendingSnapshot = nil
         pendingFolderSnapshot = nil
+        pendingManagementPreferences = nil
+        pendingExpectedLayout = nil
         activeQuery = nil
         pendingSearchResult = nil
 
@@ -253,93 +334,38 @@ public final class AppGridUIPageContentProvider: PagingPageContentProviding {
     public func applyCommittedLayout(_ layout: PersistentWorkspaceLayout,
                                       atCurrentPage currentPage: Int,
                                       itemsPerPage: Int) -> AppGridPresentationUpdate? {
-        guard let served = servedSnapshot else { return nil }
-
-        // 布局 folder 集合 → FolderSnapshot（成员解析为 AppID；不可解析成员跳过；generation 递增）。
-        let nextFolderGeneration = (servedFolderSnapshot?.generation ?? .zero).incremented()
-        let folderEntries = layout.folders.compactMap { record -> FolderEntry? in
-            let members = record.members.compactMap { ref -> AppID? in
-                served.records.first(where: { ref.matches(record: $0) })?.id
-            }
-            return FolderEntry(id: record.id, title: record.title, members: members)
-        }
-        let folderSnapshot = FolderSnapshot(generation: nextFolderGeneration, entries: folderEntries)
-
-        // 顶层组合 = 布局顺序（app 引用 → 记录；folder 身份 → 已解析 folder 条目；不可解析跳过）。
-        var entries: [TopLevelEntry] = []
-        for entry in layout.topLevelOrder {
-            switch entry {
-            case .app(let ref):
-                if let record = served.records.first(where: { ref.matches(record: $0) }) {
-                    entries.append(.app(record))
-                }
-            case .folder(let folderID):
-                if let folderEntry = folderEntries.first(where: { $0.id == folderID }) {
-                    entries.append(.folder(folderEntry))
-                }
-            }
-        }
-
-        // 更新前 anchor（旧呈现；currentPage 先按旧页数 clamp，越界 → 末页首位）。
-        let oldPageCount = presentationEntries.isEmpty
-            ? 0 : (presentationEntries.count + itemsPerPage - 1) / itemsPerPage
-        let clampedPage = oldPageCount == 0 ? 0 : min(max(currentPage, 0), oldPageCount - 1)
-        let anchor = topLevelAnchorCandidate(nearPage: clampedPage, itemsPerPage: itemsPerPage)
-
-        // 五级降级 remap + pageCount（复用既有 helper；非空组合 pageCount = ceil(count/itemsPerPage)）。
-        let (pageCount, outcome) = remapComposition(entries, anchor: anchor,
-                                                    itemsPerPage: itemsPerPage,
-                                                    baseRevision: served.revision)
-        let plan = PagePlan(snapshotRevision: served.revision, itemsPerPage: itemsPerPage,
-                            itemCount: entries.count, pageCount: pageCount)
-
-        // 原子提交（served catalog 不变；呈现 = 布局顺序；搜索态被布局提交取代）。
-        servedFolderSnapshot = folderSnapshot
-        presentationEntries = entries
-        presentationRecords = Self.appOnlyProjection(entries)
-        activeQuery = nil
-        pendingSearchResult = nil
-
-        return AppGridPresentationUpdate(plan: plan, outcome: outcome,
-                                         anchor: Self.anchorAppID(anchor),
-                                         topLevelAnchor: anchor,
-                                         previousRevision: servedRevision)
+        guard servedSnapshot != nil else { return nil }
+        guard itemsPerPage > 0 else { return nil }
+        let oldPageCount = (presentationEntries.count + itemsPerPage - 1) / itemsPerPage
+        let clampedPage = min(max(currentPage, 0), max(oldPageCount - 1, 0))
+        receiveExpectedLayout(layout)
+        return applyPending(atCurrentPage: clampedPage, itemsPerPage: itemsPerPage)
     }
 
-    /// 更新前记录稳定 anchor = committed page 首个可见 AppID（§6.3）。
-    /// 基于 app-only 投影（搜索激活时 = 结果集首个可见 AppID；首项为 folder → nil）。
     public func anchorCandidate(nearPage: Int, itemsPerPage: Int = AppGridUIPageContentProvider.defaultItemsPerPage) -> AppID? {
         guard let snapshot = servedSnapshot else { return nil }
         let presentation = CatalogSnapshot(revision: snapshot.revision, records: presentationRecords)
         return CatalogPlanner().anchorCandidate(nearPage: nearPage, in: presentation, itemsPerPage: itemsPerPage)
     }
 
-    /// 更新前记录稳定顶层条目身份 = committed page 首个可见条目身份（app AppID 或 folder FolderID）。
     public func topLevelAnchorCandidate(nearPage: Int, itemsPerPage: Int = AppGridUIPageContentProvider.defaultItemsPerPage) -> TopLevelEntryIdentity? {
-        guard servedSnapshot != nil else { return nil }
-        guard itemsPerPage > 0, nearPage >= 0 else { return nil }
+        guard servedSnapshot != nil, itemsPerPage > 0, nearPage >= 0 else { return nil }
         let entries = presentationEntries
-        guard !entries.isEmpty else { return nil }
-        let pageCount = (entries.count + itemsPerPage - 1) / itemsPerPage
-        guard nearPage < pageCount else { return nil }
-        let index = nearPage * itemsPerPage
-        guard index < entries.count else { return nil }
-        return entries[index].identity
+        guard !entries.isEmpty, nearPage < (entries.count + itemsPerPage - 1) / itemsPerPage else { return nil }
+        return entries[nearPage * itemsPerPage].identity
     }
 
-    /// 定位 AppID 在当前呈现（顶层组合中的 app 条目）中的页（nil = 不存在/未就绪）。
     public func pageIndex(of appID: AppID, itemsPerPage: Int = AppGridUIPageContentProvider.defaultItemsPerPage) -> Int? {
-        guard servedSnapshot != nil else { return nil }
-        guard let index = presentationEntries.firstIndex(where: {
-            if case .app(let record) = $0 { return record.id == appID } else { return false }
-        }) else { return nil }
+        guard servedSnapshot != nil, itemsPerPage > 0,
+              let index = presentationEntries.firstIndex(where: {
+                  if case .app(let record) = $0 { return record.id == appID }; return false
+              }) else { return nil }
         return index / itemsPerPage
     }
 
-    /// 定位顶层条目身份（app AppID 或 folder FolderID）在当前呈现中的页（nil = 不存在/未就绪）。
     public func topLevelPageIndex(of identity: TopLevelEntryIdentity, itemsPerPage: Int = AppGridUIPageContentProvider.defaultItemsPerPage) -> Int? {
-        guard servedSnapshot != nil else { return nil }
-        guard let index = presentationEntries.firstIndex(where: { $0.identity == identity }) else { return nil }
+        guard servedSnapshot != nil, itemsPerPage > 0,
+              let index = presentationEntries.firstIndex(where: { $0.identity == identity }) else { return nil }
         return index / itemsPerPage
     }
 
@@ -394,6 +420,21 @@ public final class AppGridUIPageContentProvider: PagingPageContentProviding {
 
     // MARK: - 内部
 
+    private func managedComposition(_ canonical: [TopLevelEntry], catalog: CatalogSnapshot,
+                                    preferences: AppManagementPreferences) -> [TopLevelEntry] {
+        let visibleIDs = Set(catalog.records.filter { !preferences.isHidden($0) }.map(\.id))
+        return canonical.compactMap { entry in
+            switch entry {
+            case .app(let record):
+                return preferences.isHidden(record) ? nil : .app(preferences.presentationRecord(for: record))
+            case .folder(let folder):
+                let members = folder.members.filter { visibleIDs.contains($0) }
+                guard !members.isEmpty else { return nil }
+                return .folder(FolderEntry(id: folder.id, title: folder.title, members: members))
+            }
+        }
+    }
+
     /// 对 folder 快照做成员收缩（删成员 / 空移除 / 单成员解散），并分配新 generation。
     private func rebaseFolder(_ folders: FolderSnapshot, against catalog: CatalogSnapshot) -> FolderSnapshot {
         let nextGeneration = (servedFolderSnapshot?.generation ?? .zero).incremented()
@@ -406,8 +447,9 @@ public final class AppGridUIPageContentProvider: PagingPageContentProviding {
     /// 3. anchor 消失 → `.successor(新组合稳定顺序中首个身份全序大于 anchor 的条目所在页)`；
     /// 4. 无后继 → `.predecessor(最后一个身份全序小于 anchor 的条目所在页)`；
     /// 5. 都无（含 anchor == nil）→ `.clamped(page 0)`。
-    /// app-only 组合委托 `CatalogPlanner.remap`（精确既有行为，含 AppID 全序）；混合组合用
-    /// 组合感知 remap（身份全序：folder 在 app 前；同类按 hashValue 稳定序——运行内确定）。
+    /// App-only composition delegates unchanged to CatalogPlanner.remap. Mixed
+    /// identities use apps-before-folders, the shared AppID order and canonical
+    /// UUID order. Scan the current composition; never sort the saved workspace.
     private func remapComposition(_ composition: [TopLevelEntry],
                                   anchor: TopLevelEntryIdentity?,
                                   itemsPerPage: Int,
@@ -439,19 +481,18 @@ public final class AppGridUIPageContentProvider: PagingPageContentProviding {
         return (pageCount, .clamped(pageIndex: 0))
     }
 
-    /// 顶层条目身份全序（混合组合 remap 用）：folder 在 app 前；同类按 hashValue 稳定序。
+    /// Stable identity order for missing anchors only. Cross-kind rank preserves
+    /// the existing app-before-folder branches; equal identities remain equal.
     private func identityOrder(_ a: TopLevelEntryIdentity, _ b: TopLevelEntryIdentity) -> ComparisonResult {
         switch (a, b) {
         case (.app, .folder): return .orderedAscending
         case (.folder, .app): return .orderedDescending
         case (.app(let x), .app(let y)):
-            if x.hashValue < y.hashValue { return .orderedAscending }
-            if x.hashValue > y.hashValue { return .orderedDescending }
-            return .orderedSame
+            if x == y { return .orderedSame }
+            return x.anchorOrderLessThan(y) ? .orderedAscending : .orderedDescending
         case (.folder(let x), .folder(let y)):
-            if x.hashValue < y.hashValue { return .orderedAscending }
-            if x.hashValue > y.hashValue { return .orderedDescending }
-            return .orderedSame
+            if x == y { return .orderedSame }
+            return x.anchorOrderLessThan(y) ? .orderedAscending : .orderedDescending
         }
     }
 

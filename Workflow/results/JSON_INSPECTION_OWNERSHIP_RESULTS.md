@@ -1,0 +1,26 @@
+# Shared lexical JSON inspection — results
+
+Date: 2026-10-20. Status: bounded maintainability follow-up COMPLETE; whole parity incomplete.
+
+## Implementation and preservation
+Sources/PagingPrototypeApp/JSONLexicalInspection.swift is an internal Foundation-only namespace holding the original two functions hasDuplicateObjectKeys and rootVersionTokens. The complete81-line block, including method comments, is byte-identical (SHA `a99c681fc06ca806107bbcddfbaeabde0f43dd60dbe20ffd9b08c1b26b89d825`). AppLibraryStore.swift removes only that block and qualifies its two calls; LaunchActivityStore.swift replaces two concrete Library-helper calls. Inverse transformations exactly reconstruct both original files. All existing stage-baseline inputs except these two consumer files are unchanged; one new helper and one new test file account for the other input additions.
+
+No compatibility facade, general parser/store framework, public API, package/target/dependency or JSON normalization was added. The helper is preliminary lexical inspection, not full validation; callers retain Foundation JSON shape/domain validation. UTF-8 scanning, escaped-key decoding, container handling, root-depth/token rules and malformed early returns are preserved. Each feature separately retains its byte bounds, schema1 header classification, future/ambiguous protection, strict body keys, result enums, explicit corruption-recovery policy, save receipts, actor ownership and clock-free load. The existing shared descriptor-relative I/O protocol is deliberately untouched. No durable byte rewrite, diagnostic output, consent/default/UI/paging change.
+
+## Verification
+- Existing Library13+Activity20 tests:33/0, including recovery/protected-byte, duplicate/escaped header, bounded-I/O, atomic compare/lock/no-follow cases.
+- New JSONAdmissionParityTests:5methods,36literal cases and72result assertions per run. Both stores are called for every input with independent literal expected values and valid feature documents; no new helper call/oracle, encoder or filesystem/window work.
+- Corpus covers escaped-equivalent root/nested/array-object duplicate keys; same keys in sibling objects; header-like string/array/nested decoys; integer/exponent/long numeric future/ambiguous variants; missing/invalid/malformed headers; invalid/truncated UTF-8; valid Library/Activity bodies and deliberate wrong/mixed envelopes. Truncated future-body protection is preserved, not silently tightened into a parser rewrite.
+- Identical test bytes compile/execute against both exact original consumers:5/0; current consumers restored byte-exact in finally, then rebuilt extracted consumers:5/0. No expectation edit or failure was needed. This GREEN/GREEN preservation proof is not a defect reproduction or exhaustive input-space proof.
+- Final frozen 553 source/test/script/manifest inputs: focused40/0, full3381/0, Debug build, actual Release isolated packaging/localization and git diff --check exit0. Existing warnings were observed during target recompilation; no warning-clean claim. Packaged365keys×3languages verified; no optional Library profiling marker enabled.
+
+## Ownership and independent review
+Main owns three production paths, baseline replay/restoration, frozen verification and documentation. Feynman owns only the new test file, ran no tests/builds and is closed. Hilbert independently reviews frozen source/spec/tests and exact extraction/inverse proof, owns only JSON_INSPECTION_OWNERSHIP-r2.md, and is closed. Its bounded PASS is source/test-source scope, not independent native/runtime acceptance; all execution receipts are Main-owned. At most three agents including Main; disjoint writes, serial SwiftPM.
+
+## Artifact and limits
+Unsigned/uninstalled/unlaunched `/Users/mac/Projects/Launch_Copy/PagingPrototype/.build/candidates/json-inspection-rc-20261020-r1/LaunchcopyUITest.app`; executable SHA-256 `0b9b20add454473ed6470498cdb031c51e2fe938da20d1826f0ee5ef97e4bb1e`. Earlier fd395b00 own test runtime left untouched; process-only runtime-boundary.json separates it from newest build, no current native-state claim. No formal data, OS preferences, prohibited reference/evidence, process signal, install/sign/publish or Git mutation action. Existing suites operate owned temporary fixtures only.
+
+This closes services-audit P3 concrete decoder-helper coupling; it does not claim new security/performance behavior, universal parser correctness, physical gesture/device/IME/VoiceOver acceptance or complete product parity. User-deferred first Library hitch remains non-blocking, CPU explanation unproven; no new profiling or tuning.
+
+## Evidence and next action
+Docs/JSON_INSPECTION_OWNERSHIP_SPEC.md; immutable review-inputs-r2/ plus hash manifest, baseline inputs/copies, extraction-proof.json, parity-proof.json/restoration.json, source-inputs.json, final verification.json and logs under .build/verification/20261020/json-inspection/. Initial full packet/r1 pending review and pre-job rejection are retained as evidence-binding history; corrected r2 binds current sources. Independent review and stage summary remain under Workflow/. Subsequent end-to-end candidate handover/native verification and outstanding approved product gates must use their own evidence; do not keep rerunning this closed extraction to imply whole parity.

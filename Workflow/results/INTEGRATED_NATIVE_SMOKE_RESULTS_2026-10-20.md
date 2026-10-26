@@ -1,0 +1,30 @@
+# Integrated current-candidate native smoke — 2026-10-20
+
+Status: BASIC NATIVE SMOKE COMPLETE. Not full product parity, physical performance or independent live-native acceptance.
+
+## Exact artifact / ownership
+User explicitly confirmed unlock; supported desktop inventory became accessible. Current candidate `/Users/mac/Projects/Launch_Copy/PagingPrototype/.build/candidates/json-inspection-rc-20261020-r1/LaunchcopyUITest.app`, executable SHA `0b9b20add454473ed6470498cdb031c51e2fe938da20d1826f0ee5ef97e4bb1e`. Main operated only its isolated profile with supported CUA. Prior fd395b00 own instance normally quit and exact process absence confirmed; no signal/force or formal app change. Current first process66664 normally quit; same artifact reopened as72860. Source553 hashes and all249 known authored fixture files remained unchanged after both normal Quit and reopen. No tests/build/source changes were needed or rerun. Historical3381/0/Debug/Release/package/source review remains its prior scoped evidence.
+
+## Actual observations
+| Area | Main-observed native result | Boundary |
+| --- | --- | --- |
+| Window/background | Ordinary titled window; wallpaperREADY on both launches | Desktop2 placement not verified; no fullscreen/notch/multidisplay/material timing or wallpaper-cause claim |
+| Main search | Typed owned-fixture query yields single result; focused field has no outer blue ring; Escape restores empty-query grid | No raw query/personal screenshot retained; not real IME acceptance |
+| Main keyboard | Folder-close selection restored to source; generatedRight visibly moves selection to adjacent cell | Generated native key delivery, not physical keyboard/human PASS; legitimate cell-selection blue remains |
+| Folder | Glyph click opens35-member glass panel/max5×3; Next changes page1→2 with outer grid unchanged; Escape closes and restores source focus | Initial AX label click did not open; glyph fallback succeeds. Whole label-click behavior not certified. Source-origin first-frame/reversal not measured |
+| Folder generated scroll | One CUA horizontal scroll produced no committed inner-page change, background remained still | INCONCLUSIVE for gesture admission/threshold; not proof of real two-finger success or new behavioral defect; no synthetic event workaround or profiling |
+| Settings | Six tabs seen; Appearance main80/base48/font11/blur18/labelsON and6columns×5rows; merged capacity, no AppearanceApply/Gridtab | Values retained after reopen; scalar preferences were not changed, so no new scalar write/reload claim |
+| Other settings | Sources root is own authored Applications; automaticON; identifier searchOFF; languageSystem; loginOFF and isolated four-finger unready truthfully shown | No source/consent/activation/login/language changes; fake adapters do not prove production activation |
+| Library consent | Fresh profile LibraryOFF observed, explicitly enabled through native checkbox with savedstatus; activity remainsOFF | Only this approved test preference changed; no history enable/Clear/Trash/real app launch |
+| Library overview | Viewmenu entry opens8category cards with no overviewBack or gridentrybutton; focused search lacks blue outer ring | Aesthetic/continuous motion and spoken AX not certified |
+| Drilldown/details | Category10 results; single-row selection opens factual details; detailsBack closes; categoryBack returns overview | No category/alias/hidden/folder/destructive changes or app launch |
+| Library query/Escape | Independent owned-fixture query gives1 result; firstEscape clears to overview, secondEscape returns main; no residual wide search frame | No raw private query saved; no real IME claim |
+| Dots/context | Direct second-dot jump stabilizes2of2. From apppage2, ViewmenuLibrary thenEscape stabilizes original2of2; returned firstdot before Quit | Immediate transition AX/dot snapshots were transient; later stable values confirmed. Not frame-by-frame flicker or physical gesture evidence |
+| Normal Quit/reopen | No save-error/force exit; exact firstcurrentPID absent; samecandidate reopened with LibraryON/activityOFF, six-by-five seed and folder membership/order retained | LibraryOFF→ON persistence is a real changed-choice/reopen check. Scalars stayed at defaults/seed values, not a write test. Not crash/powerloss durability |
+
+No screenshots/wallpaper pixels/UI dumps/query text/app identities or keyboard streams saved. CUA inline observations were used transiently; structured neutral observations in `.build/verification/20261020/integrated-validation/native-results-r1.json`. Exact candidate/PIDs and authored fixture metadata are owned artifact identifiers.
+
+## Honest delivery state / next action
+Latest exact app remains running in ordinary main first page, emptyquery/folderclosed/settingsclosed/wallpaperREADY. LibraryON/activityOFF in only its fresh candidate-local test profile. Formal app, preferences and real apps untouched; all249 known fixture files byte-identical, source553unchanged. Source/tool-generated native observations above do not close actual physical gestures/drag/first-frame, IME/VoiceOver,120Hz/multidisplay/productionactivation/energy/performance or remaining semantic branches. First Library hitch stays user-deferred/nonblocking, CPUunproven; not profiled or retuned. No newly established implementation defect justifies a speculative repair from this bounded smoke.
+
+Previous lock impasse resolved by actual user unlock and this task made native PROGRESS; resumed blocked audit resets0. Last get_goal still reported historicalblocked and its API cannot manually resume; no false ACTIVE transition or full-goal-complete call is made. Do not carry old lock conclusions forward as current UI state. Next external product evidence is a brief actual-user experience check on this exact build, not repetition of the closed Sources/Trash/history/material matrices. Separate major semantic/device sessions remain explicit. No install/sign/publish/Git mutation/OS change/process signal/reference-source action.

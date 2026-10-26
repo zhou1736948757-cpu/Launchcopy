@@ -39,9 +39,26 @@ public final class ActivationComposition {
 
     /// 宿主注入：hide 前取消 drag/folder/search/title 等瞬态（ADR-011 Q7）。
     public var onPrepareHide: (() -> Void)?
+    /// Host-owned idle-work admission; fail closed without a live host.
+    public var canHideFromFourFinger: () -> Bool = { false }
+    private var touchAttachmentGeneration: UInt64 = 0
+    private let touchDeliveryFence = FourFingerDeliveryFence()
+    private var outwardInputNotBefore: TimeInterval?
+
+    /// 宿主注入：屏幕几何变化前取消 Folder/其他依赖窗口坐标的瞬态。
+    public var onScreensChanged: (() -> Void)?
 
     /// 四指时钟（生产 = 系统；测试注入 FakePinchClock）。
     private let pinchClock: PinchClock
+    /// Installed only by an explicit diagnostic host; nil avoids formatting/I/O.
+    var onFourFingerDiagnostic: ((String) -> Void)?
+    /// Explicit dedicated-host diagnostic only; default nil, bounded, no raw input retained.
+    private(set) var gestureDeliveryObservation: GestureDeliveryObservation?
+    func startGestureDeliveryObservation() {
+        guard activationTeardownCount == 0 else { return }
+        gestureDeliveryObservation = GestureDeliveryObservation()
+    }
+    func stopGestureDeliveryObservation() { gestureDeliveryObservation = nil }
     /// 是否已请求过 quit（避免重复 terminate 请求风暴；teardown 仍幂等）。
     private var didRequestQuit = false
 
@@ -89,18 +106,30 @@ public final class ActivationComposition {
     public func applyPreferences(_ preferences: ActivationPreferences) {
         let plan = ActivationServicePlan(
             settings: preferences.settings,
-            fourFingerEnabled: preferences.fourFingerActivationEnabled
+            fourFingerEnabled: preferences.fourFingerActivationEnabled,
+            fourFingerOutwardHideEnabled: preferences.fourFingerOutwardHideEnabled
         )
         applyPlan(plan)
     }
 
     /// 应用服务计划 diff（原子顺序由 ActivationServicePlanDiff 保证）。
     public func applyPlan(_ plan: ActivationServicePlan) {
+        guard activationTeardownCount == 0, !didRequestQuit else { return }
+        if (appliedPlan.fourFingerOutwardHideEnabled || plan.fourFingerOutwardHideEnabled),
+           appliedPlan.fourFingerEnabled != plan.fourFingerEnabled
+            || appliedPlan.fourFingerOutwardHideEnabled != plan.fourFingerOutwardHideEnabled {
+            touchDeliveryFence.advance()
+            outwardInputNotBefore = pinchClock.now()
+        }
         let transitions = ActivationServicePlanDiff.transitions(from: appliedPlan, to: plan)
         for transition in transitions {
             applyTransition(transition)
         }
         appliedPlan = plan
+        if var fourFinger {
+            fourFinger.setOutwardHideEnabled(plan.fourFingerEnabled && plan.fourFingerOutwardHideEnabled)
+            self.fourFinger = fourFinger
+        }
         syncHotCornerLauncherVisibility()
     }
 
@@ -122,7 +151,16 @@ public final class ActivationComposition {
         source: LauncherActivationSource,
         reason: DismissReason
     ) -> LauncherPresentationEffect {
+        performHide(source: source, reason: reason)
+    }
+
+    private func performHide(source: LauncherActivationSource, reason: DismissReason,
+                             admission: (() -> Bool)? = nil) -> LauncherPresentationEffect {
+        guard admission?() != false else { return .none }
         onPrepareHide?()
+        // Cleanup is a reentrant boundary: disabling/replacing the provider or
+        // starting protected work must revoke an already recognized Hide.
+        guard admission?() != false else { return .none }
         let effect = launcher.hide(source: source, reason: reason)
         syncHotCornerLauncherVisibility()
         return effect
@@ -183,6 +221,7 @@ public final class ActivationComposition {
     public func teardownActivationServices() {
         guard activationTeardownCount == 0 else { return }
         activationTeardownCount = 1
+        touchAttachmentGeneration &+= 1
 
         if let registrar = shortcutRegistrar as? CarbonGlobalShortcutRegistrar {
             registrar.teardown()
@@ -205,6 +244,9 @@ public final class ActivationComposition {
             self.fourFinger = fourFinger
         }
         fourFinger = nil
+        onFourFingerDiagnostic = nil
+        gestureDeliveryObservation = nil
+        canHideFromFourFinger = { false }
         appliedPlan = ActivationServicePlan()
     }
 
@@ -213,7 +255,7 @@ public final class ActivationComposition {
     /// 生产路径：同步 presentation → process → flush → adopt → apply effects。
     @discardableResult
     public func processFourFingerFrame(_ frame: PinchFrame) -> [LauncherPresentationEffect] {
-        guard var fourFinger else { return [] }
+        guard activationTeardownCount == 0, !didRequestQuit, var fourFinger else { return [] }
         fourFinger.targetScreen = LauncherTargetScreenResolver.resolve()
         fourFinger.adoptPresentation(launcher.coordinator)
         // 异步交付会使帧时间戳相对主线程 clock 偏旧；对齐到当前单调时钟再识别
@@ -225,24 +267,61 @@ public final class ActivationComposition {
             phase: frame.phase,
             contacts: frame.contacts
         )
-        let events = fourFinger.process(aligned)
-        let effects = fourFinger.flushPendingShows()
+        let expectedAttachment = touchAttachmentGeneration
+        let originalGeneration = fourFinger.recognizer.generation
+        let admission = outwardHideIsAdmitted
+        gestureDeliveryObservation?.record(frame: frame, now: now, admission: admission,
+            cutoff: outwardInputNotBefore, expiry: fourFinger.recognizer.parameters.dataExpiryInterval)
+        guard touchAttachmentGeneration == expectedAttachment,
+              self.fourFinger?.recognizer.generation == originalGeneration else { return [] }
+        if let cutoff = outwardInputNotBefore,
+           frame.timestamp < cutoff {
+            fourFinger.requireReleaseAfterDeliveryInvalidation(frame.deviceID)
+            self.fourFinger = fourFinger
+            return []
+        }
+        // The historical inward-only path aligns delivery time. Optional Hide
+        // must retain the provider clock to reject backlog, invalid and reordered input.
+        let input = fourFinger.requiresValidatedFrameTime ? frame : aligned
+        let events = fourFinger.process(input, allowOutwardHide: admission)
+        var effects = fourFinger.flushPendingShows()
+        let hideRequested = fourFinger.flushPendingHides(allowHide: admission)
+        gestureDeliveryObservation?.record(events: events, hideRequested: hideRequested)
+        let expectedRecognizerGeneration = fourFinger.recognizer.generation
         launcher.adoptCoordinator(fourFinger.presentation)
         self.fourFinger = fourFinger
-        if !events.isEmpty || effects.contains(where: { if case .present = $0 { return true }; return false }) {
+        if let report = onFourFingerDiagnostic, !events.isEmpty || effects.contains(where: { if case .present = $0 { return true }; return false }) {
             let presentCount = effects.filter { if case .present = $0 { return true }; return false }.count
-            print("paging-fourfinger-show: events=\(events.count) presentEffects=\(presentCount) showCount=\(fourFinger.showCount) recognizer=\(fourFinger.recognizer.state) presentation=\(launcher.coordinator.state) contacts=\(frame.contacts.count)")
-            fflush(stdout)
+            report("paging-fourfinger-show: events=\(events.count) presentEffects=\(presentCount) showCount=\(fourFinger.showCount) recognizer=\(fourFinger.recognizer.state) presentation=\(launcher.coordinator.state) contacts=\(frame.contacts.count)")
         }
         for effect in effects {
             launcher.apply(effect)
+        }
+        if hideRequested {
+            let effect = performHide(source: .fourFingerPinch, reason: .fourFingerOutward) {
+                self.touchAttachmentGeneration == expectedAttachment
+                    && self.fourFinger?.recognizer.generation == expectedRecognizerGeneration
+                    && self.outwardHideIsAdmitted
+            }
+            effects.append(effect)
         }
         syncHotCornerLauncherVisibility()
         return effects
     }
 
+    private var outwardHideIsAdmitted: Bool {
+        guard activationTeardownCount == 0, !didRequestQuit,
+              appliedPlan.fourFingerEnabled, appliedPlan.fourFingerOutwardHideEnabled,
+              fourFinger?.isReady == true,
+              case .visible = launcher.coordinator.state else { return false }
+        return canHideFromFourFinger()
+    }
+
     /// 注入/替换 touch provider（测试用 Mock；生产 MultitouchSupportBackend）。
     public func attachTouchProvider(_ provider: any TouchProvider, userEnabled: Bool) {
+        guard activationTeardownCount == 0 else { return }
+        touchAttachmentGeneration &+= 1
+        let attachment = touchAttachmentGeneration
         touchProvider?.onFrame = nil
         touchProvider?.onStateChange = nil
         touchProvider?.stop()
@@ -253,24 +332,32 @@ public final class ActivationComposition {
             userEnabled: userEnabled
         )
         coordinator.adoptPresentation(launcher.coordinator)
+        coordinator.setOutwardHideEnabled(userEnabled && appliedPlan.fourFingerOutwardHideEnabled)
         coordinator.start()
         self.fourFinger = coordinator
 
+        let deliveryFence = touchDeliveryFence
         provider.onFrame = { [weak self] frame in
+            let delivery = deliveryFence.snapshot()
             // Provider 回调可能来自交付队列；presentation 写必须在主线程。
             if Thread.isMainThread {
                 MainActor.assumeIsolated {
-                    _ = self?.processFourFingerFrame(frame)
+                    guard let self, self.touchAttachmentGeneration == attachment else { return }
+                    self.receiveFourFingerFrame(frame, delivery: delivery)
                 }
             } else {
                 DispatchQueue.main.async {
-                    _ = self?.processFourFingerFrame(frame)
+                    guard let self, self.touchAttachmentGeneration == attachment else { return }
+                    self.receiveFourFingerFrame(frame, delivery: delivery)
                 }
             }
         }
         provider.onStateChange = { [weak self] state in
+            let delivery = deliveryFence.snapshot()
             let applyState = { [weak self] in
-                guard let self, var fourFinger = self.fourFinger else { return }
+                guard let self, self.touchAttachmentGeneration == attachment,
+                      deliveryFence.snapshot() == delivery,
+                      self.activationTeardownCount == 0, var fourFinger = self.fourFinger else { return }
                 fourFinger.handleProviderState(state)
                 self.fourFinger = fourFinger
             }
@@ -285,15 +372,31 @@ public final class ActivationComposition {
         self.touchProvider = provider
         provider.start()
         if case .ready = provider.state {
-            var fourFinger = coordinator
-            fourFinger.handleProviderState(.ready)
-            self.fourFinger = fourFinger
+            if var fourFinger = self.fourFinger, self.touchAttachmentGeneration == attachment {
+                fourFinger.handleProviderState(.ready)
+                self.fourFinger = fourFinger
+            }
         }
+    }
+
+    private func receiveFourFingerFrame(_ frame: PinchFrame, delivery: UInt64) {
+        guard touchDeliveryFence.snapshot() == delivery else {
+            // A contact frame queued before a mode/service edit cannot gain the
+            // new generation. Preserve release protection even if its baseline
+            // had not reached the main actor when the edit occurred.
+            if !frame.contacts.isEmpty, var fourFinger {
+                fourFinger.requireReleaseAfterDeliveryInvalidation(frame.deviceID)
+                self.fourFinger = fourFinger
+            }
+            return
+        }
+        _ = processFourFingerFrame(frame)
     }
 
     // MARK: - Session
 
     public func handleSessionEvent(_ event: WorkspaceSessionEvent) {
+        if appliedPlan.fourFingerOutwardHideEnabled { touchDeliveryFence.advance() }
         WorkspaceSessionHotCornerBridge.apply(event, to: hotCornerMonitor)
 
         switch event {
@@ -328,6 +431,7 @@ public final class ActivationComposition {
                 _ = launcher.resume()
             }
         case .screensChanged:
+            onScreensChanged?()
             if var fourFinger {
                 fourFinger.targetScreen = LauncherTargetScreenResolver.resolve()
                 self.fourFinger = fourFinger
@@ -379,6 +483,8 @@ public final class ActivationComposition {
             if let touchProvider, !touchProvider.isStarted {
                 touchProvider.start()
             }
+        case .setFourFingerOutwardHide:
+            break // Applied once from the final effective plan, without provider churn.
         case .stopFourFinger:
             touchProvider?.stop()
             if var fourFinger {
@@ -391,5 +497,22 @@ public final class ActivationComposition {
 
     private func syncHotCornerLauncherVisibility() {
         hotCornerMonitor.setLauncherVisible(launcher.coordinator.committedVisibility)
+    }
+}
+
+/// Receipt-time epoch only: no contact coordinates, provider calls or user closures
+/// are stored under this lock. Bridges provider queues to main-actor mode edits.
+private final class FourFingerDeliveryFence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var generation: UInt64 = 0
+
+    func snapshot() -> UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        return generation
+    }
+
+    func advance() {
+        lock.lock(); defer { lock.unlock() }
+        generation &+= 1
     }
 }

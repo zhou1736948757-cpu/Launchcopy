@@ -1,0 +1,25 @@
+# Library folder destination choices — maintenance contract
+
+Date: 2026-10-15. Existing approved LAUNCHBETTER_FOLDER_ASSIGNMENT_SLICE §§functional/data and APP_LIBRARY safe-organization contract. No new product feature, schema, public protocol, navigation model or gesture.
+
+## Defect / outcome
+Grid menu resolves canonical app reference/current owner, traverses topLevelOrder, excludes current owner and assigns collision-safe local ordinal labels. Library sheet currently uses folders storage-array order/raw titles and always includes move-to-top-level, even for an already-top-level app. Thus identical folders cannot be distinguished and destination order/owner exclusion contradict the already approved shared workflow.
+
+## Bounded implementation
+Extract current grid's pure destination computation/title policy into one internal app-target value helper in the existing menu controller file. Both grid and actual Library sheet consume the same canonical FolderIDs/order/title policy; no fabricated grid-cell binding for Library. Include latent canonical destinations, exclude current owner, append Move to Main Page only for a current member whose owner is top-level. No actionable destinations -> no assignment sheet/menu. Retain current app-reference resolver and all mutation/current-owner/writer-epoch/store-directory/exact-layout/request-generation guards. Do not alter LayoutMutation or persistence.
+
+## Acceptance / tests
+Before implementation, actual AppDelegate Library sheet counterexample: storage folder array order differs from canonical topLevelOrder; three equal titles plus literal ordinal-looking title; selected app is a current folder member. Assert actual NSPopUpButton labels/action identities, excluded current owner, latent destination and native accessibility label. Then assert actual sheet completion moves to selected stable FolderID despite changed display label, produces one ordinary layout enqueue, and retains source dissolution/unrelated refs. Top-level app must not offer move-out; no destination must not create a useless sheet. Existing stale same-writer-directory replacement test must still reject old callback and accept a fresh valid destination; update fixture selection to typedactionidentity, not popupindexassumption. Existing gridpolicy/ordinal/safety tests remain unchanged.
+
+## Delivery / limits
+Main owns three existing inputs: AppDelegate.swift, AppFolderAssignmentMenuController.swift, MenuMutationLifecycleTests.swift; preserves dirtytree. This tightly coupled shared-construction change stays serial; independent bounded reviewer runs only after freeze, concurrently with Main-only serial verification. Max3 agents inclMain. ActualRED/focused/full/Debug/Release/newuniquepackage/hash/sourcefreeze/review. Native owned synthetic populated profile may verify visible sheet if feasible; source/tests are not native/physical acceptance. No scan/icon/I/O/perframework added; bounded computation only when menu/sheet is requested.
+
+No formaldata/referencecode/resources/OSsetting/permission/sign/install/publish/commit/kill/delete. Current92936519candidate stays retained. Physical and whole-goal gates remain; conditional appearance persistence finding remains separate queued maintenance.
+
+## Current checkpoint — 2026-10-15 Library folder choices repaired
+
+Goal ACTIVE/incomplete; this turn PROGRESS. Actual sheet RED3/7 plus collision RED1/4 -> shared canonical destination policy and explicit independent popup items. Focused189/0, full2693/0, Debug/actualRelease/package/288keys3languages/gitdiffcheck pass. Exactly3/455 inputs changed (2appsource+existingtest),452others unchanged. Independent Ramanujan SOURCE PASS/noP0–P3/0executions, closed. New candidate library-folder-choices-rc-20261015-r1 exe252ec673581b1c3d0c54c1fee9ce1080a89691a0fd114e93ebe7c2096b57cba3; all455 and executable rehashed after GUI.
+
+Main native PID90621: new own10-app/5-folder seeded profile actually loaded; real Library popup retains canonical ordered/distinct ordinal choices, excludes owner, retains operation-named folder and move-out. Same(3) Save -> correct stable folderB, source dissolution/position/all10refs once; write11. Restored LibraryOff/queryempty, normalQuit/exactabsence -> new92276 restores layout; actual target opened with Gamma/Delta/Beta; payload unchanged. FinalnormalQuit/exactabsence, no postQuitquery. Only owned fixture data retained; no formaldata/fault/job/agent/owninstance left. Screenshot of extended popup cropped to sheet: no separate native visual separator claim. Wallpaper still loading/NOT_FIXED.
+
+Next actual approved defect: conditional appearance persistent factory nil -> InMemory falseSaved. Full delivery Workflow/results/LIBRARY_FOLDER_CHOICES_CHECKPOINT.md; stage2026-10-15-library-folder-choices.md; evidence .build/verification/20261015/library-folder-choices/. Pending physical/user/OS permission and unapproved product branches remain; no full-goal or independent native Reviewer PASS. No install/sign/publish/commit/kill/delete/reference copy.

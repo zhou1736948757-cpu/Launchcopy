@@ -175,6 +175,19 @@ final class LauncherIntegrationTests: XCTestCase {
         XCTAssertEqual(h.composition.terminateRequestCount, 0)
     }
 
+    func testScreensChangedNotifiesHostBeforeTargetScreenRefresh() {
+        let h = makeHarness()
+        var callbackCount = 0
+        h.composition.onScreensChanged = {
+            callbackCount += 1
+        }
+        h.composition.startSessionObserver()
+
+        h.session.post(.screensChanged)
+
+        XCTAssertEqual(callbackCount, 1)
+    }
+
     // MARK: - Hot corner
 
     func testHotCornerShowWhileHiddenPresents() {

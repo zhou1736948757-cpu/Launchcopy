@@ -23,6 +23,8 @@ final class AppArgumentsTests: XCTestCase {
         XCTAssertEqual(options.pageHosting, .live)
         XCTAssertEqual(options.reduceMotionOverride, .system)
         XCTAssertFalse(options.fullscreen)
+        XCTAssertFalse(options.uiTestWindowed)
+        XCTAssertNil(options.uiTestProfile)
         XCTAssertNil(options.frameTimerToleranceMS)
         XCTAssertFalse(options.frameProfile)
         XCTAssertFalse(options.frameCallbackProfile)
@@ -52,6 +54,86 @@ final class AppArgumentsTests: XCTestCase {
         XCTAssertTrue(options.fullscreen)
         XCTAssertTrue(options.telemetryEnabled)
         XCTAssertEqual(options.runID, "smoke-001")
+    }
+
+    func testBackgroundUIWindowIsExplicitlyOptIn() throws {
+        let windowed = try parse(["--ui-test-windowed"])
+        XCTAssertTrue(windowed.uiTestWindowed)
+        XCTAssertNil(windowed.uiTestProfile, "Window policy alone does not select isolated storage")
+        let combined = try parse(["--fullscreen", "--ui-test-windowed"])
+        XCTAssertTrue(combined.uiTestWindowed)
+        XCTAssertTrue(combined.fullscreen, "Application assembly gives test mode precedence")
+    }
+
+    func testUITestProfileParsesWithWindowedInEitherOrder() throws {
+        for arguments in [
+            ["--ui-test-windowed", "--ui-test-profile", "rename-01"],
+            ["--ui-test-profile", "rename-01", "--ui-test-windowed"],
+        ] {
+            let options = try parse(arguments)
+            XCTAssertEqual(options.uiTestProfile, "rename-01")
+            XCTAssertTrue(options.uiTestWindowed)
+            XCTAssertFalse(options.telemetryEnabled)
+            XCTAssertTrue(options.catalogRoots.isEmpty)
+        }
+    }
+
+    func testUITestProfileAcceptsExactIdentifierBounds() throws {
+        for id in ["a", "0", "a-", "a--b", String(repeating: "z", count: 48)] {
+            let options = try parse(["--ui-test-windowed", "--ui-test-profile", id])
+            XCTAssertEqual(options.uiTestProfile, id)
+        }
+    }
+
+    func testUITestProfileInvalidIdentifiersNeverFallBack() {
+        for id in ["", "-a", "A", "a_b", "a.b", "../a", "/tmp/a", "a/b", "a\\b",
+                   " a", "a ", "a\n", "a\0", "é", "测试", "ａ", String(repeating: "a", count: 49)] {
+            assertParseError(["--ui-test-windowed", "--ui-test-profile", id], .invalidUITestProfile)
+        }
+    }
+
+    func testUITestProfileRequiresWindowedEvenWithHelpOrFullscreen() {
+        for suffix in [[], ["--fullscreen"], ["--help"], ["-h"]] {
+            assertParseError(["--ui-test-profile", "rename-01"] + suffix, .uiTestProfileRequiresWindowed)
+        }
+    }
+
+    func testUITestProfileMissingValuesAndRepeatedFlagReject() {
+        assertParseError(["--ui-test-windowed", "--ui-test-profile"], .missingValue("--ui-test-profile"))
+        assertParseError(["--ui-test-profile", "--ui-test-windowed"], .missingValue("--ui-test-profile"))
+        assertParseError([
+            "--ui-test-windowed", "--ui-test-profile", "one", "--ui-test-profile", "two",
+        ], .duplicateUITestProfile)
+        assertParseError([
+            "--ui-test-windowed", "--ui-test-profile", "../bad", "--ui-test-profile", "valid",
+        ], .invalidUITestProfile)
+        assertParseError(["--ui-test-windowed", "--ui-test-profile=one"], .unknownArgument("--ui-test-profile=one"))
+    }
+
+    func testUITestProfileCoexistsWithExistingFlags() throws {
+        let options = try parse([
+            "/tmp/Launchcopy.app/Contents/MacOS/PagingPrototypeApp",
+            "--ui-test-profile", "appearance-1", "--ui-test-windowed", "--fullscreen",
+            "--catalog-root", "/tmp/synthetic-apps", "--folder-lab", "--paging-telemetry",
+            "--run-id", "isolated-run", "--page-count", "3",
+        ])
+        XCTAssertEqual(options.uiTestProfile, "appearance-1")
+        XCTAssertTrue(options.uiTestWindowed)
+        XCTAssertTrue(options.fullscreen, "Assembly gives windowed mode precedence")
+        XCTAssertTrue(options.folderLab)
+        XCTAssertTrue(options.telemetryEnabled)
+        XCTAssertEqual(options.runID, "isolated-run")
+        XCTAssertEqual(options.pageCount, 3)
+        XCTAssertEqual(options.catalogRoots, [URL(fileURLWithPath: "/tmp/synthetic-apps")])
+    }
+
+    private func assertParseError(
+        _ arguments: [String], _ expected: AppArguments.ParseError,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        XCTAssertThrowsError(try parse(arguments), file: file, line: line) { error in
+            XCTAssertEqual(error as? AppArguments.ParseError, expected, file: file, line: line)
+        }
     }
 
     func testFullscreenFlagParsed() throws {
@@ -178,6 +260,10 @@ final class AppArgumentsTests: XCTestCase {
         XCTAssertTrue(AppArguments.helpText().contains("--momentum-glide-frames"))
         XCTAssertTrue(AppArguments.helpText().contains("--momentum-overshoot"))
         XCTAssertTrue(AppArguments.helpText().contains("--fullscreen"))
+        XCTAssertTrue(AppArguments.helpText().contains("--ui-test-windowed"))
+        XCTAssertTrue(AppArguments.helpText().contains("--ui-test-profile <id>"))
+        XCTAssertTrue(AppArguments.helpText().contains("[a-z0-9][a-z0-9-]{0,47}"))
+        XCTAssertTrue(AppArguments.helpText().contains(".build/candidates"))
         XCTAssertTrue(AppArguments.helpText().contains("--catalog-root"))
         XCTAssertTrue(AppArguments.helpText().contains("--neutral-content"))
         XCTAssertTrue(AppArguments.helpText().contains("--frame-driver"))

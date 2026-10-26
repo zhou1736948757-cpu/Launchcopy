@@ -41,6 +41,12 @@ public struct FolderID: Hashable, Sendable {
         self.storage = uuid
     }
 
+    /// Missing-anchor lookup only; canonical UUID spelling stays in memory.
+    /// This does not reorder saved or displayed entries or expose raw storage.
+    func anchorOrderLessThan(_ other: FolderID) -> Bool {
+        storage.uuidString < other.storage.uuidString
+    }
+
     /// 仅调试；不含原文。
     public var redactedDescription: String {
         "FolderID(<redacted>)"

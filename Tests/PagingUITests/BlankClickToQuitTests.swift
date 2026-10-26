@@ -203,6 +203,58 @@ final class BlankClickToQuitTests: XCTestCase {
                       "点击 cell 内名称标签子视图应沿 superview 链判为 cell，不误判为空退出")
     }
 
+    /// icon±4 契约（T-1J-LM-HITREVERT 恢复）：cell 内的 nameLabel / padding 点击点不命中
+    /// 启动热区 —— 窗口层分类落空，沿既有空白路径处理（不误判为 cell 放行）。
+    func testCellInteriorNonIconPointsClassifyAsBlank() {
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        let cell = AppGridCellView(frame: NSRect(x: 50, y: 50, width: 88, height: 88))
+        root.addSubview(cell)
+        cell.layout()
+
+        // 对照：图标中心点仍判为 cell（icon±4 热区内 → pass-through 分类）。
+        let iconInRoot = cell.convert(
+            NSPoint(x: cell.iconView.frame.midX, y: cell.iconView.frame.midY), to: root)
+        XCTAssertTrue(blankClickResolvesToCell(root.hitTest(iconInRoot), at: iconInRoot, in: root),
+                      "icon±4 内点击 → cell 分类（不退出）")
+
+        // nameLabel 中点：cell.hitTest 落空 → 命中链无 cell → 空白分类。
+        let labelInRoot = cell.convert(
+            NSPoint(x: cell.nameLabel.frame.midX, y: cell.nameLabel.frame.midY), to: root)
+        XCTAssertFalse(blankClickResolvesToCell(root.hitTest(labelInRoot), at: labelInRoot, in: root),
+                       "nameLabel 点击在 icon±4 之外 → 空白路径（不误判为 cell）")
+        // 点级门禁复核：即便 hit 误传为 cell，acceptsLaunchHit 仍把非热区点判为空白。
+        XCTAssertFalse(blankClickResolvesToCell(cell, at: labelInRoot, in: root),
+                       "hit=cell 但点在 icon±4 热区外 → 点级门禁判空白")
+
+        // 格内 padding（cell 左上内角）：同样落空 → 空白分类。
+        let paddingInRoot = cell.convert(NSPoint(x: 4, y: cell.bounds.maxY - 4), to: root)
+        XCTAssertFalse(blankClickResolvesToCell(root.hitTest(paddingInRoot), at: paddingInRoot, in: root),
+                       "格内 padding 点击在 icon±4 之外 → 空白路径")
+    }
+
+    func testNestedCellDescendantResolvesToOwningCell() {
+        let (_, cell) = makeHierarchy()
+        let nestedView = NSView(frame: .zero)
+        cell.iconView.addSubview(nestedView)
+
+        XCTAssertTrue(appGridCellAncestor(cell) === cell)
+        XCTAssertTrue(appGridCellAncestor(cell.iconView) === cell)
+        XCTAssertTrue(appGridCellAncestor(nestedView) === cell,
+                      "B1 must deliver to the owning cell, not an arbitrary descendant")
+        XCTAssertNil(appGridCellAncestor(NSView(frame: .zero)))
+    }
+
+    func testInteractionZoneClassificationIsSeparateFromCellResolution() {
+        let field = AppSearchFieldView(frame: NSRect(x: 0, y: 0, width: 200, height: 28))
+        let fieldSubview = NSView(frame: .zero)
+        field.addSubview(fieldSubview)
+
+        XCTAssertTrue(blankClickResolvesToInteractionZone(field))
+        XCTAssertTrue(blankClickResolvesToInteractionZone(fieldSubview))
+        XCTAssertFalse(blankClickResolvesToInteractionZone(NSView(frame: .zero)))
+        XCTAssertNil(appGridCellAncestor(fieldSubview))
+    }
+
     // MARK: - T-1D-E：搜索 field/editor/clear button 是 interaction zone（不退出）
 
     func testSearchFieldItselfIsInteractionZone() {
@@ -279,4 +331,17 @@ final class BlankClickToQuitTests: XCTestCase {
         XCTAssertEqual(ClickCensus.Sink.blankHitChainHasOverlay(hasOverlay: true), "s17_blankhit_chain_has_overlay_ov1")
         XCTAssertEqual(ClickCensus.Sink.blankHitChainHasOverlay(hasOverlay: false), "s17_blankhit_chain_has_overlay_ov0")
     }
+    func testNativeTitleBarMouseDownDoesNotDismissOrExitSearch() {
+        let h = makeClickHarness()
+        var dismissals = 0
+        var searchExits = 0
+        h.window.onBlankClick = { dismissals += 1 }
+        h.window.onBlankClickShouldExitSearch = { searchExits += 1; return true }
+        let titlePoint = NSPoint(x: h.window.contentLayoutRect.midX,
+                                y: h.window.contentLayoutRect.maxY + 8)
+        h.window.sendEvent(blankMouseDown(at: titlePoint))
+        XCTAssertEqual(dismissals, 0)
+        XCTAssertEqual(searchExits, 0, "Native title-bar dragging must bypass launcher blank-click handling")
+    }
+
 }

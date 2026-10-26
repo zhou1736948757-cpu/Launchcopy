@@ -1,0 +1,29 @@
+# App Library — approved specification
+
+Status: APPROVED by the human on 2026-10-15 via the explicit proposal-confirmation question. The previously proposed scope in `APP_LIBRARY_SLICE_PROPOSAL.md` is incorporated in full; its PROPOSED markers remain historical, not a new gate. This is independent implementation within the existing Launchcopy architecture, not imported reference code or assets.
+
+## Outcomes and scope
+Provide an optional, default-disabled Library in the resident launcher window, with categories, independently searchable results, on-demand factual details and manual categorization. Reuse hidden/alias preferences, committed catalog and public validated app actions. Return restores grid query/page/selection against current content. Normal hide resets Library navigation. No usage history, recommendations, extra gestures, uninstall, new folders, row/column changes or physics changes.
+
+## Approved contracts
+The flat 22-category taxonomy, explicit game mappings, nullable category/version/build metadata from the existing plist decode, independent query and Escape priority, safe lifecycle transition restrictions, dormant overrides and alias/original-name search are as specified in the proposal. All is filter-only. Unknown metadata maps to Other. Only visible matching records contribute counts.
+
+Library preferences use a separate version-1 JSON file, bounded to 1 MiB, serial off-main writer, atomic replacement/flush and accepted-write protection in the existing bounded Quit policy (default Cancel on failure/timeout). Invalid/future payloads are not autonomously rewritten. Test storage remains candidate-local with a .library namespace; invalid profiles never fall back to production. Disabled Library does not create directories on inspection.
+
+## Implementation decomposition and interface contract
+No new SwiftPM target is needed initially. Main owns native navigation, UI, accepted writes, profile/quit wiring and Package.swift. Foundation worker owns optional catalog metadata and pure Library domain under AppGridUI. Localization worker owns typed keys and three-language resources. Workers do not execute Swift builds or control apps.
+
+Foundation interfaces: AppBundleMetadata(declaredCategoryIdentifier: String? = nil, version: String? = nil, build: String? = nil); AppRecord.bundleMetadata with .init() default. AppLibraryCategory is String/Codable/CaseIterable with raw suffix IDs, camelCase Swift cases for hyphenated IDs and declaredIdentifier mapping. AppLibraryPreferences(enabled: Bool = false, categoryOverrides: [String: AppLibraryCategory] = [:]), .default, isValid, manualCategory(for:), category(for:), settingCategory(_:for:). Setting nil removes preferred and canonical-path equivalents. AppLibraryProjection.make(catalog:management:preferences:query:category:locale:) returns AppLibrarySnapshot with revision, entries and counts; AppLibraryEntry contains canonical record, displayName, category and manualCategory. Projection is pure; owner runs it off-main and gates publication by generation.
+
+Localization interface: LibraryTextKey plus LocalizedStrings.libraryText(_:) for navigation, categories, detail labels, preference/recovery/save states. No domain dependency in LauncherLocalization; enum case names matching AppLibraryCategory are prefixed category (e.g. categoryDeveloperTools).
+
+## Verification and maintenance
+Nonzero focused/full tests, optional metadata and forwarding, fixed taxonomy, reset/fallback/dormant/hide/search, malformed/future/oversized/file failure, latest-wins state, action races and navigation/lifecycle tests. Debug/Release and strict packaged localization remain separate from GUI/restart/accessibility/physical performance gates. Source review is independent and does not self-certify physical acceptance. Every material result is recorded in the visible stage summary; leave remaining parity gates explicit. Do not commit/install/sign/publish or mutate production data. Keep existing dirty tree and historical evidence intact.
+
+## Foundation implementation bounds
+Optional declaration strings are admitted only when at most 1,024 UTF-8 bytes; oversize values become unknown rather than being truncated or rescanned. File loading supports the writer-produced UTF-8 format; ambiguous/duplicate and non-UTF-8 schema headers remain protected rather than silently downgraded. Preferences and projections are not yet assembled into the resident window at the foundation-wave checkpoint; do not advertise UI availability from source/test gates.
+
+## Accepted-write and filesystem coordination clarification
+The serial actor is supplemented by an advisory exclusive lock for participating local writers and compare-to-inspected-bytes commit admission. Directory traversal, temporary files, replacement and cleanup use pinned no-follow descriptors. Detected target or directory substitutions fail without overwriting substituted bytes. The supported contract is cooperating Launchcopy writers in the private local storage directory; arbitrary non-participating filesystem editors or malicious namespace mutation cannot be made atomic by renameat and remain outside this coordination guarantee. Do not describe the store as unconditionally race-proof. Missing inspection creates no directory/lock.
+
+All successful save receipts are retained independently of latest-request presentation. If B saved successfully while C superseded it, and C fails, terminal presentation reconciles to B (the actual last successful baseline); C remains failed and Quit drain still reports failure. This preserves accepted changes rather than publishing the failed draft or treating stale A as disk truth. New drafts derive from this real baseline. Equal-content retries perform write/flush again, so an indeterminate post-replacement failure cannot become a false successful receipt through content equality alone. Physical restart/power-loss durability remains a separate unproven gate.
